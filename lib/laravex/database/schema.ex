@@ -3,7 +3,10 @@ defmodule Laravex.Database.Schema do
 
   def create(table, fun) when is_binary(table) and is_function(fun, 1) do
     blueprint = Laravex.Database.Blueprint.new(table) |> then(fun)
-    Laravex.Database.Connection.execute(Laravex.Database.Blueprint.to_sql(blueprint))
+
+    Enum.each(Laravex.Database.Blueprint.statements(blueprint), fn sql ->
+      Laravex.Database.Connection.execute(sql)
+    end)
   end
 
   def drop_if_exists(table) when is_binary(table) do
@@ -18,6 +21,18 @@ defmodule Laravex.Database.Schema do
       )
 
     rows != []
+  end
+
+  def has_index?(table, index_name) do
+    rows =
+      Laravex.Database.Connection.query(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? AND name=?",
+        [table, index_name]
+      )
+
+    rows != []
+  rescue
+    _ -> false
   end
 end
 
@@ -41,8 +56,29 @@ defmodule Laravex.Database.Blueprint do
   def remember_token(bp), do: string(bp, "remember_token", nullable: true)
   def foreign_id(bp, name, opts \\ []), do: col(bp, name, "INTEGER", opts)
 
+  def index(bp, columns, name \\ nil) do
+    cols = columns |> List.wrap() |> Enum.map(&to_string/1)
+    iname = name || "#{bp.table}_#{Enum.join(cols, "_")}_index"
+    %{bp | indexes: [{iname, cols, false} | bp.indexes]}
+  end
+
+  def unique(bp, columns, name \\ nil) do
+    cols = columns |> List.wrap() |> Enum.map(&to_string/1)
+    iname = name || "#{bp.table}_#{Enum.join(cols, "_")}_unique"
+    %{bp | indexes: [{iname, cols, true} | bp.indexes]}
+  end
+
   def to_sql(%__MODULE__{table: table, columns: columns}) do
     "CREATE TABLE IF NOT EXISTS #{table} (#{Enum.join(Enum.reverse(columns), ", ")})"
+  end
+
+  def statements(%__MODULE__{} = bp) do
+    [to_sql(bp) | Enum.map(Enum.reverse(bp.indexes), &index_sql(bp.table, &1))]
+  end
+
+  defp index_sql(table, {name, cols, unique?}) do
+    unique = if unique?, do: "UNIQUE ", else: ""
+    "CREATE #{unique}INDEX IF NOT EXISTS #{name} ON #{table} (#{Enum.join(cols, ", ")})"
   end
 
   defp col(bp, name, type, opts) do
@@ -56,7 +92,12 @@ defmodule Laravex.Database.Blueprint do
         if(nullable or primary, do: "", else: " NOT NULL") <>
         if(unique, do: " UNIQUE", else: "")
 
-    add(bp, sql)
+    bp = add(bp, sql)
+
+    cond do
+      Keyword.get(opts, :index, false) -> index(bp, [name])
+      true -> bp
+    end
   end
 
   defp add(bp, sql), do: %{bp | columns: [sql | bp.columns]}

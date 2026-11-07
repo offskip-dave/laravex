@@ -30,6 +30,7 @@ defmodule Laravex.Console.Kernel do
     "queue:flush" => {&__MODULE__.cmd_queue_flush/1, "Flush all of the failed queue jobs"},
     "queue:batches" => {&__MODULE__.cmd_queue_batches/1, "List the job batches"},
     "queue:batch" => {&__MODULE__.cmd_queue_batch/1, "Show or cancel a job batch"},
+    "sanctum:prune-expired" => {&__MODULE__.cmd_prune_tokens/1, "Prune expired API tokens"},
     "schedule:run" => {&__MODULE__.cmd_schedule/1, "Run due scheduled tasks"},
     "schedule:list" => {&__MODULE__.cmd_schedule_list/1, "List all scheduled tasks"},
     "event:list" => {&__MODULE__.cmd_event_list/1, "List registered events and listeners"},
@@ -305,6 +306,11 @@ defmodule Laravex.Console.Kernel do
   end
 
   def cmd_queue_batch(_), do: IO.puts("Usage: artisan queue:batch {id} | queue:batch cancel {id}")
+
+  def cmd_prune_tokens(_) do
+    Laravex.Auth.Token.prune_expired()
+    IO.puts("Expired API tokens pruned.")
+  end
 
   def cmd_db_show(args) do
     table =

@@ -265,13 +265,15 @@ defmodule Laravex.Generators do
       Queued job. Use `queue: false` for sync-only jobs.
 
           App.Jobs.#{name}.dispatch([arg])
+          App.Jobs.#{name}.dispatch([arg], tries: 3, backoff: 10)
+          App.Jobs.#{name}.dispatch_sync([arg])
       \"\"\"
 
       use Laravex.Queue.Job, queue: true
 
       def handle(args) do
-        # TODO: implement
-        args
+        # Perform work with `args` (list).
+        {:ok, args}
       end
     end
     """)
@@ -312,7 +314,25 @@ defmodule Laravex.Generators do
     defmodule App.Http.Requests.#{name} do
       use Laravex.Http.FormRequest
 
-      def rules, do: %{"name" => "required|string"}
+      def authorize(_request), do: true
+
+      def rules do
+        %{
+          "name" => "required|string|max:255"
+        }
+      end
+
+      def messages do
+        %{
+          "name.required" => "A :attribute is required."
+        }
+      end
+
+      def attributes do
+        %{
+          "name" => "name"
+        }
+      end
     end
     """)
   end

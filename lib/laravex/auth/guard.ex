@@ -239,14 +239,16 @@ defmodule Laravex.Auth.Token do
     :ok
   end
 
-  def create(user, name \\ "default", abilities \\ ["*"]) do
+  def create(user, name \\ "default", abilities \\ ["*"], opts \\ []) do
     ensure()
     plain = Laravex.Support.Helpers.str_random(40)
     hash = hash_token(plain)
     now = DateTime.utc_now() |> DateTime.to_iso8601()
     abilities = normalize_abilities(abilities)
+    expires_at = normalize_expires(Keyword.get(opts, :expires_at) || Keyword.get(opts, :expires_in))
 
-    :ets.insert(@table, {hash, %{user_id: user.id, name: name, abilities: abilities}})
+    meta = %{user_id: user.id, name: name, abilities: abilities, expires_at: expires_at}
+    :ets.insert(@table, {hash, meta})
 
     if table_ready?() do
       Laravex.Database.Query.insert("personal_access_tokens", %{
@@ -255,12 +257,18 @@ defmodule Laravex.Auth.Token do
         "name" => name,
         "token" => hash,
         "abilities" => encode_abilities(abilities),
+        "expires_at" => expires_at,
         "created_at" => now,
         "updated_at" => now
       })
     end
 
-    %{"plainTextToken" => plain, "accessToken" => hash, "abilities" => abilities}
+    %{
+      "plainTextToken" => plain,
+      "accessToken" => hash,
+      "abilities" => abilities,
+      "expires_at" => expires_at
+    }
   end
 
   def find_user(plain_token) when is_binary(plain_token) do
@@ -280,18 +288,63 @@ defmodule Laravex.Auth.Token do
     hash = hash_token(plain_token)
     model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
 
-    case :ets.lookup(@table, hash) do
-      [{_, %{user_id: id, abilities: abilities}}] ->
-        case model.find(id) do
-          nil -> nil
-          user -> %{user: user, abilities: abilities || ["*"], token: hash}
-        end
+    case lookup_token(hash) do
+      nil ->
+        nil
 
-      [{_, %{user_id: id}}] ->
-        case model.find(id) do
-          nil -> nil
-          user -> %{user: user, abilities: ["*"], token: hash}
+      %{user_id: id, abilities: abilities, expires_at: expires_at} = meta ->
+        if expired?(expires_at) do
+          revoke_hash(hash)
+          nil
+        else
+          touch_last_used(hash)
+
+          case model.find(id) do
+            nil -> nil
+            user -> %{user: user, abilities: abilities || ["*"], token: hash, expires_at: Map.get(meta, :expires_at)}
+          end
         end
+    end
+  end
+
+  def revoke(plain_or_hash) when is_binary(plain_or_hash) do
+    ensure()
+    hash = if String.length(plain_or_hash) == 64 and Regex.match?(~r/^[a-f0-9]+$/, plain_or_hash) do
+      plain_or_hash
+    else
+      hash_token(plain_or_hash)
+    end
+
+    revoke_hash(hash)
+    :ok
+  end
+
+  def prune_expired do
+    ensure()
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    if table_ready?() do
+      Laravex.Database.Connection.execute(
+        "DELETE FROM personal_access_tokens WHERE expires_at IS NOT NULL AND expires_at <= ?",
+        [now]
+      )
+    end
+
+    if :ets.whereis(@table) != :undefined do
+      :ets.tab2list(@table)
+      |> Enum.each(fn
+        {hash, %{expires_at: exp}} -> if expired?(exp), do: :ets.delete(@table, hash)
+        _ -> :ok
+      end)
+    end
+
+    :ok
+  end
+
+  defp lookup_token(hash) do
+    case :ets.lookup(@table, hash) do
+      [{_, meta}] when is_map(meta) ->
+        meta
 
       [] ->
         if table_ready?() do
@@ -299,13 +352,15 @@ defmodule Laravex.Auth.Token do
                |> Laravex.Database.Query.where("token", hash)
                |> Laravex.Database.Query.first() do
             %{"tokenable_id" => id} = row ->
-              abilities = decode_abilities(row["abilities"])
-              :ets.insert(@table, {hash, %{user_id: id, name: row["name"] || "db", abilities: abilities}})
+              meta = %{
+                user_id: id,
+                name: row["name"] || "db",
+                abilities: decode_abilities(row["abilities"]),
+                expires_at: row["expires_at"]
+              }
 
-              case model.find(id) do
-                nil -> nil
-                user -> %{user: user, abilities: abilities, token: hash}
-              end
+              :ets.insert(@table, {hash, meta})
+              meta
 
             _ ->
               nil
@@ -315,6 +370,54 @@ defmodule Laravex.Auth.Token do
         end
     end
   end
+
+  defp touch_last_used(hash) do
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    if table_ready?() do
+      Laravex.Database.Connection.execute(
+        "UPDATE personal_access_tokens SET last_used_at = ?, updated_at = ? WHERE token = ?",
+        [now, now, hash]
+      )
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp revoke_hash(hash) do
+    if :ets.whereis(@table) != :undefined, do: :ets.delete(@table, hash)
+
+    if table_ready?() do
+      Laravex.Database.Connection.execute("DELETE FROM personal_access_tokens WHERE token = ?", [hash])
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp expired?(nil), do: false
+  defp expired?(""), do: false
+
+  defp expired?(expires_at) when is_binary(expires_at) do
+    case DateTime.from_iso8601(expires_at) do
+      {:ok, dt, _} -> DateTime.compare(dt, DateTime.utc_now()) != :gt
+      _ -> false
+    end
+  end
+
+  defp expired?(%DateTime{} = dt), do: DateTime.compare(dt, DateTime.utc_now()) != :gt
+  defp expired?(_), do: false
+
+  defp normalize_expires(nil), do: nil
+  defp normalize_expires(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp normalize_expires(seconds) when is_integer(seconds) and seconds > 0 do
+    DateTime.utc_now() |> DateTime.add(seconds, :second) |> DateTime.to_iso8601()
+  end
+  defp normalize_expires(iso) when is_binary(iso), do: iso
+  defp normalize_expires(_), do: nil
 
   @doc "Whether the current bearer token (or given abilities) allows `ability`."
   def token_can?(ability) when is_binary(ability) or is_atom(ability) do

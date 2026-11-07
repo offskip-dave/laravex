@@ -14,10 +14,13 @@ defmodule Laravex.Validation do
   end
 
   def validate(data, rules, opts \\ []) when is_map(data) and is_map(rules) do
+    {rules, excluded} = apply_exclusions(data, rules)
+    rules = expand_nested_rules(data, rules)
+
     errors =
       Enum.reduce(rules, %{}, fn {field, rule_spec}, acc ->
         field = to_string(field)
-        value = Map.get(data, field) || Map.get(data, String.to_atom(field))
+        value = field_value(data, field)
         field_errors = check(field, value, normalize_rules(rule_spec), data, opts)
 
         if field_errors == [] do
@@ -28,7 +31,12 @@ defmodule Laravex.Validation do
       end)
 
     if map_size(errors) == 0 do
-      {:ok, only_rule_keys(data, rules)}
+      validated =
+        data
+        |> only_rule_keys(rules)
+        |> Map.reject(fn {k, _} -> MapSet.member?(excluded, to_string(k)) end)
+
+      {:ok, validated}
     else
       {:error, errors}
     end
@@ -67,11 +75,122 @@ defmodule Laravex.Validation do
   end
 
   def only_rule_keys(data, rules) when is_map(data) and is_map(rules) do
-    keys = rules |> Map.keys() |> Enum.map(&to_string/1) |> MapSet.new()
+    keys = rules |> Map.keys() |> Enum.map(&to_string/1)
 
+    Enum.reduce(keys, %{}, fn key, acc ->
+      if String.contains?(key, ".") do
+        case Laravex.Support.Arr.get(data, key, :__missing__) do
+          :__missing__ -> acc
+          value -> Laravex.Support.Arr.set(acc, key, value)
+        end
+      else
+        cond do
+          Map.has_key?(data, key) -> Map.put(acc, key, Map.get(data, key))
+          Map.has_key?(data, String.to_atom(key)) -> Map.put(acc, key, Map.get(data, String.to_atom(key)))
+          true -> acc
+        end
+      end
+    end)
+  end
+
+  defp field_value(data, field) do
+    if String.contains?(field, ".") do
+      Laravex.Support.Arr.get(data, field)
+    else
+      Map.get(data, field) || Map.get(data, String.to_atom(field))
+    end
+  end
+
+  defp apply_exclusions(data, rules) do
+    Enum.reduce(rules, {%{}, MapSet.new()}, fn {field, spec}, {kept, excluded} ->
+      field = to_string(field)
+      list = normalize_rules(spec)
+      {exclude_rules, other_rules} = Enum.split_with(list, &exclude_rule?/1)
+
+      if Enum.any?(exclude_rules, &exclude_applies?(&1, data)) do
+        {kept, MapSet.put(excluded, field)}
+      else
+        {Map.put(kept, field, other_rules), excluded}
+      end
+    end)
+  end
+
+  defp exclude_rule?("exclude_if:" <> _), do: true
+  defp exclude_rule?("exclude_unless:" <> _), do: true
+  defp exclude_rule?("exclude"), do: true
+  defp exclude_rule?(_), do: false
+
+  defp exclude_applies?("exclude", _data), do: true
+
+  defp exclude_applies?("exclude_if:" <> rest, data) do
+    case String.split(rest, ",", parts: 2) do
+      [other, expected] ->
+        to_string(field_value(data, String.trim(other)) || "") == String.trim(expected)
+
+      _ ->
+        false
+    end
+  end
+
+  defp exclude_applies?("exclude_unless:" <> rest, data) do
+    case String.split(rest, ",", parts: 2) do
+      [other, expected] ->
+        to_string(field_value(data, String.trim(other)) || "") != String.trim(expected)
+
+      _ ->
+        false
+    end
+  end
+
+  defp exclude_applies?(_, _), do: false
+
+  defp expand_nested_rules(data, rules) do
+    Enum.reduce(rules, %{}, fn {field, spec}, acc ->
+      field = to_string(field)
+
+      if String.contains?(field, "*") do
+        Map.merge(acc, expand_wildcard(data, field, spec))
+      else
+        Map.put(acc, field, spec)
+      end
+    end)
+  end
+
+  defp expand_wildcard(data, pattern, spec) do
+    pattern
+    |> concrete_paths(data)
+    |> Map.new(fn path -> {path, spec} end)
+  end
+
+  defp concrete_paths(pattern, data) do
+    do_concrete(String.split(pattern, "."), data, [])
+  end
+
+  defp do_concrete([], _data, acc), do: [Enum.join(Enum.reverse(acc), ".")]
+
+  defp do_concrete(["*" | rest], data, acc) when is_list(data) do
     data
-    |> Enum.filter(fn {k, _} -> MapSet.member?(keys, to_string(k)) end)
-    |> Map.new(fn {k, v} -> {to_string(k), v} end)
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {item, idx} ->
+      do_concrete(rest, item, [to_string(idx) | acc])
+    end)
+  end
+
+  defp do_concrete(["*" | _rest], _data, _acc), do: []
+
+  defp do_concrete([part | rest], data, acc) when is_map(data) do
+    value = Map.get(data, part) || Map.get(data, String.to_atom(part))
+
+    if is_nil(value) and rest != [] do
+      []
+    else
+      do_concrete(rest, value, [part | acc])
+    end
+  end
+
+  defp do_concrete([part | rest], _data, acc) do
+    # Leaf missing parent — still emit path so required can fail
+    if rest == [], do: [Enum.join(Enum.reverse([part | acc]), ".")], else: []
   end
 
   def flash_errors(request, errors) do
@@ -134,14 +253,26 @@ defmodule Laravex.Validation do
       "required" ->
         if blank?(value), do: ["The #{field} field is required."], else: []
 
-      "required_if:" <> rest ->
-        conditional_required(field, value, data, rest, :if)
+          "required_if:" <> rest ->
+            conditional_required(field, value, data, rest, :if)
 
-      "required_unless:" <> rest ->
-        conditional_required(field, value, data, rest, :unless)
+          "required_unless:" <> rest ->
+            conditional_required(field, value, data, rest, :unless)
 
-      "prohibited" ->
-        if blank?(value), do: [], else: ["The #{field} field is prohibited."]
+          "required_with:" <> rest ->
+            required_with_rule(field, value, data, rest, :any)
+
+          "required_with_all:" <> rest ->
+            required_with_rule(field, value, data, rest, :all)
+
+          "required_without:" <> rest ->
+            required_without_rule(field, value, data, rest, :any)
+
+          "required_without_all:" <> rest ->
+            required_without_rule(field, value, data, rest, :all)
+
+          "prohibited" ->
+            if blank?(value), do: [], else: ["The #{field} field is prohibited."]
 
       "prohibited_if:" <> rest ->
         conditional_prohibited(field, value, data, rest, :if)
@@ -336,11 +467,49 @@ defmodule Laravex.Validation do
   defp rule_name(_), do: ""
 
   defp field_present?(data, field) do
-    Map.has_key?(data, field) or Map.has_key?(data, String.to_atom(field))
+    if String.contains?(to_string(field), ".") do
+      Laravex.Support.Arr.get(data, field, :__missing__) != :__missing__
+    else
+      Map.has_key?(data, field) or Map.has_key?(data, String.to_atom(field))
+    end
   end
 
-  defp data_get(data, field) do
-    Map.get(data, field) || Map.get(data, String.to_atom(field))
+  defp data_get(data, field), do: field_value(data, to_string(field))
+
+  defp filled_field?(data, field) do
+    not blank?(field_value(data, String.trim(to_string(field))))
+  end
+
+  defp required_with_rule(field, value, data, rest, mode) do
+    others = rest |> String.split(",") |> Enum.map(&String.trim/1)
+
+    present? =
+      case mode do
+        :any -> Enum.any?(others, &filled_field?(data, &1))
+        :all -> Enum.all?(others, &filled_field?(data, &1))
+      end
+
+    if present? and blank?(value) do
+      ["The #{field} field is required when #{Enum.join(others, " / ")} is present."]
+    else
+      []
+    end
+  end
+
+  defp required_without_rule(field, value, data, rest, mode) do
+    others = rest |> String.split(",") |> Enum.map(&String.trim/1)
+
+    missing? =
+      case mode do
+        :any -> Enum.any?(others, &(not filled_field?(data, &1)))
+        :all -> Enum.all?(others, &(not filled_field?(data, &1)))
+      end
+
+    if missing? and blank?(value) do
+      ["The #{field} field is required when #{Enum.join(others, " / ")} is not present."]
+    else
+      []
+    end
   end
 
   defp conditional_required(field, value, data, rest, mode) do
@@ -744,22 +913,32 @@ defmodule Laravex.Http.FormRequest do
   Base form request behaviour.
 
   Attach via route opts: `form_request: App.Http.Requests.StorePost`.
+
+      def messages, do: %{"email.required" => "We need your :attribute"}
+      def attributes, do: %{"email" => "email address"}
   """
 
   @callback rules() :: map()
   @callback authorize(request :: map()) :: boolean()
+  @callback messages() :: map()
+  @callback attributes() :: map()
+  @optional_callbacks messages: 0, attributes: 0
 
   defmacro __using__(_opts) do
     quote do
       @behaviour Laravex.Http.FormRequest
 
       def authorize(_request), do: true
+      def messages, do: %{}
+      def attributes, do: %{}
 
       def validate_request(request) do
         unless authorize(request),
           do: raise(Laravex.Http.HttpException, status: 403, message: "Forbidden")
 
-        case Laravex.Validation.validate_request(request, rules()) do
+        opts = [messages: messages(), attributes: attributes()]
+
+        case Laravex.Validation.validate_request(request, rules(), opts) do
           {:ok, validated, request} ->
             request = %{request | validated: validated}
             Process.put(:laravex_request, request)
@@ -770,7 +949,7 @@ defmodule Laravex.Http.FormRequest do
         end
       end
 
-      defoverridable authorize: 1
+      defoverridable authorize: 1, messages: 0, attributes: 0
     end
   end
 

@@ -34,7 +34,7 @@ mix test
 |---|---|
 | Foundation | Container, HTTP/router, global + terminable middleware, CORS, TrustHosts/Proxies, cache.headers, cookie encrypt, `/up` + `/health`, JSON 404/exceptions, logging |
 | Database | SQLite, Schema/Blueprint, migrations, query builder, **Eloquex** (fillable/guarded, touch/refresh/increment, relations, `with`/`with_count`, paginate/chunk, scopes, factories + Faker) |
-| Auth web loop | Session (file/database), CSRF, flash, guard, policies/gates, password broker/reset, FormRequest (`messages`/`attributes`, filtered `validated`), Rule + file/date rules, Crypt, signed URLs, API tokens with abilities |
+| Auth web loop | Session (file/database), CSRF, flash, guard, policies/gates, password broker/reset, FormRequest (`messages`/`attributes`, nested/conditional rules, filtered `validated`), Crypt, signed URLs, API tokens (abilities, expiry, revoke/prune) |
 | DX | `make:*`, migrate/fresh/wipe/seed, config/route/event/view cache, `optimize`, `db:show`/`model:show`, queue failed + batch tools, schedule (`withoutOverlapping`)/event list, serve, tinker, Str/Arr, Collection, `AGENTS.md` |
 | Services | Cache, queue (sync/database/deferred, ShouldQueue, tries/backoff, failed retry), Bus chain + batch (cancel/list), queued listeners, mail (log/array), notifications inbox, logging, filesystem (visibility/download), named rate limiters |
 | HTTP | Static files, multipart uploads + mimes validation, downloads, JsonResource (`merge_when`/`additional`/`wrap`) + paginator `links`, OTP `:json`, `Http.Client` (fluent + fake/stub/assert) |
