@@ -136,6 +136,38 @@ defmodule Laravex.Database.Model do
         Laravex.Database.Model.where_doesnt_have(__MODULE__, q, relation, constraint)
       end
 
+      def has(relation) when is_atom(relation) or is_binary(relation) do
+        where_has(relation)
+      end
+
+      def has(%Laravex.Database.Query{} = q, relation) do
+        where_has(q, relation)
+      end
+
+      def doesnt_have(relation) when is_atom(relation) or is_binary(relation) do
+        where_doesnt_have(relation)
+      end
+
+      def doesnt_have(%Laravex.Database.Query{} = q, relation) do
+        where_doesnt_have(q, relation)
+      end
+
+      def load_missing(%__MODULE__{} = model, relations) do
+        Laravex.Database.Model.load_missing(model, __MODULE__, relations)
+      end
+
+      def load_missing(models, relations) when is_list(models) do
+        Laravex.Database.Model.load_missing(models, __MODULE__, relations)
+      end
+
+      def upsert(rows, unique_by, update \\ nil) do
+        Laravex.Database.Query.upsert(table_name(), List.wrap(rows), unique_by, update)
+      end
+
+      def insert_or_ignore(rows) do
+        Laravex.Database.Query.insert_or_ignore(table_name(), rows)
+      end
+
       def with_trashed, do: all(with_trashed: true)
       def only_trashed, do: all(only_trashed: true)
 
@@ -534,6 +566,24 @@ defmodule Laravex.Database.Model do
   def load_relation(model, owner_mod, relation_name, opts \\ []) do
     [loaded] = batch_load_relation([model], owner_mod, relation_name, opts)
     loaded
+  end
+
+  @doc "Eager-load only relations that are not already loaded."
+  def load_missing(model, owner_mod, relations) when not is_list(model) do
+    [loaded] = load_missing([model], owner_mod, relations)
+    loaded
+  end
+
+  def load_missing(models, owner_mod, relations) when is_list(models) do
+    rels =
+      relations
+      |> List.wrap()
+      |> Enum.map(&to_string/1)
+      |> Enum.reject(fn name ->
+        Enum.all?(models, &relation_loaded?(&1, name))
+      end)
+
+    with_relations(models, owner_mod, rels)
   end
 
   def batch_load_relation(models, owner_mod, relation_name, opts \\ [])

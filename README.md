@@ -33,9 +33,9 @@ mix test
 | Layer | Capabilities |
 |---|---|
 | Foundation | Container, HTTP/router, global + terminable middleware, CORS, TrustHosts/Proxies, cache.headers, cookie encrypt, `/up` + `/health`, JSON 404/exceptions, logging |
-| Database | SQLite, Schema/Blueprint, migrations, query builder (`join`/`left_join`/`group_by`/`having`), **Eloquex** (fillable/guarded, touch/refresh/increment, relations, `where_has`/`where_doesnt_have`, `find_or_fail`, `with`/`with_count`, paginate/chunk, scopes, factories + Faker) |
+| Database | SQLite, Schema/Blueprint (`soft_deletes`/`morphs`, `table`/`alter`), migrations, query builder (`join`/`when_cond`/`latest`/`upsert`), **Eloquex** (relations, `where_has`/`has`/`load_missing`, `find_or_fail`, `with`/`with_count`, paginate/chunk, scopes, factories + Faker) |
 | Auth web loop | Session (file/database), CSRF, flash, guard, policies/gates, password broker/reset, FormRequest (`messages`/`attributes`, nested/conditional/`accepted`/`alpha*`/`gt` rules, filtered `validated`), Crypt, signed URLs, API tokens (abilities, expiry, revoke/prune) |
-| DX | `make:*`, migrate/fresh/wipe/seed, config/route/event/view cache, `optimize`, `db:show`/`model:show`, queue failed + batch tools, schedule (`withoutOverlapping`)/event list, serve, tinker, Str/Arr, Collection, `AGENTS.md` |
+| DX | `make:*`, migrate/fresh/wipe/seed, config/route/event/view cache, `optimize`, `db:show`/`model:show`, queue failed + batch tools, schedule (`withoutOverlapping`)/event list, serve, tinker, Str/Arr, Collection, feature `TestCase` helpers, `AGENTS.md` |
 | Services | Cache, queue (sync/database/deferred, ShouldQueue, tries/backoff, failed retry), Bus chain + batch (cancel/list), queued listeners, mail (log/array), notifications inbox, logging, filesystem (visibility/download), named rate limiters |
 | HTTP | Static files, multipart uploads + mimes validation, downloads, JsonResource (`merge_when`/`additional`/`wrap`) + paginator `links`, OTP `:json`, `Http.Client` (fluent + fake/stub/assert) |
 | Views | Blade `{{ }}`/`{!! !!}`, `old()`, `@lang`/`__()`, `@csrf`/`@method`/`@selected`/`@checked`/`@class`/`@isset`/`@once`/`@verbatim`/`@props`/`@aware`/`@links`/`@pushOnce`, `@if`/`@forelse`, `@include`/`@includeIf`/`@includeWhen`/`@includeUnless`, `@foreach`, `@error`/`@session`, `@auth`/`@can`/`@cannot`, `@json`, components/stacks |

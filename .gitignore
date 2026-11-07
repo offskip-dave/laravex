@@ -13,4 +13,4 @@ erl_crash.dump
 /storage/*.key
 /vendor
 .DS_Store
-./vscode
+.vscode

@@ -10,11 +10,30 @@ defmodule Laravex.Database.Query do
             order: nil,
             limit: nil,
             offset: nil,
+            distinct?: false,
             columns: ["*"]
 
   def table(name), do: %__MODULE__{table: name}
 
   def select(%__MODULE__{} = q, cols) when is_list(cols), do: %{q | columns: cols}
+
+  def distinct(%__MODULE__{} = q, value \\ true), do: %{q | distinct?: value == true}
+
+  @doc "Laravel `when` — apply `fun` when `condition` is truthy (Elixir-reserved name avoided)."
+  def when_cond(%__MODULE__{} = q, condition, fun) when is_function(fun, 1) do
+    if truthy_condition?(condition), do: fun.(q), else: q
+  end
+
+  @doc "Laravel `unless` — apply `fun` when `condition` is falsy."
+  def unless_cond(%__MODULE__{} = q, condition, fun) when is_function(fun, 1) do
+    if truthy_condition?(condition), do: q, else: fun.(q)
+  end
+
+  def latest(%__MODULE__{} = q, column \\ "created_at"), do: order_by_desc(q, column)
+  def oldest(%__MODULE__{} = q, column \\ "created_at"), do: order_by(q, column, "asc")
+
+  defp truthy_condition?(v) when v in [false, nil, 0, "", "0"], do: false
+  defp truthy_condition?(_), do: true
 
   def select_raw(%__MODULE__{} = q, sql) when is_binary(sql) do
     %{q | columns: q.columns ++ [sql]}
@@ -188,6 +207,70 @@ defmodule Laravex.Database.Query do
     Enum.map(rows, &insert(table, &1))
   end
 
+  @doc """
+  Insert or ignore on UNIQUE/PRIMARY conflict (SQLite `INSERT OR IGNORE`).
+  """
+  def insert_or_ignore(table, attrs) when is_binary(table) and is_map(attrs) do
+    cols = Map.keys(attrs) |> Enum.map(&to_string/1)
+    vals = Enum.map(cols, &Map.get(attrs, &1) || Map.get(attrs, String.to_atom(&1)))
+    placeholders = Enum.map_join(cols, ", ", fn _ -> "?" end)
+
+    Laravex.Database.Connection.execute(
+      "INSERT OR IGNORE INTO #{table} (#{Enum.join(cols, ", ")}) VALUES (#{placeholders})",
+      vals
+    )
+
+    :ok
+  end
+
+  def insert_or_ignore(table, rows) when is_binary(table) and is_list(rows) do
+    Enum.each(rows, &insert_or_ignore(table, &1))
+    :ok
+  end
+
+  @doc """
+  Upsert rows on conflict of `unique_by` columns, updating `update` columns
+  (SQLite `ON CONFLICT ... DO UPDATE`).
+
+      Query.upsert(\"users\", [%{\"email\" => \"a@b.c\", \"name\" => \"A\"}], [\"email\"], [\"name\"])
+  """
+  def upsert(table, rows, unique_by, update \\ nil)
+      when is_binary(table) and is_list(rows) do
+    unique_by = unique_by |> List.wrap() |> Enum.map(&to_string/1)
+
+    Enum.each(List.wrap(rows), fn attrs ->
+      attrs = stringify_attrs(attrs)
+      cols = Map.keys(attrs)
+      vals = Enum.map(cols, &Map.get(attrs, &1))
+      placeholders = Enum.map_join(cols, ", ", fn _ -> "?" end)
+
+      update_cols =
+        case update do
+          nil -> Enum.reject(cols, &(&1 in unique_by))
+          list -> list |> List.wrap() |> Enum.map(&to_string/1)
+        end
+
+      conflict = Enum.join(unique_by, ", ")
+
+      sql =
+        if update_cols == [] do
+          "INSERT INTO #{table} (#{Enum.join(cols, ", ")}) VALUES (#{placeholders}) ON CONFLICT(#{conflict}) DO NOTHING"
+        else
+          sets = Enum.map_join(update_cols, ", ", fn c -> "#{c} = excluded.#{c}" end)
+
+          "INSERT INTO #{table} (#{Enum.join(cols, ", ")}) VALUES (#{placeholders}) ON CONFLICT(#{conflict}) DO UPDATE SET #{sets}"
+        end
+
+      Laravex.Database.Connection.execute(sql, vals)
+    end)
+
+    :ok
+  end
+
+  defp stringify_attrs(attrs) when is_map(attrs) do
+    Map.new(attrs, fn {k, v} -> {to_string(k), v} end)
+  end
+
   def update(%__MODULE__{} = q, attrs) when is_map(attrs) do
     sets =
       attrs
@@ -291,8 +374,9 @@ defmodule Laravex.Database.Query do
 
   defp to_sql(%__MODULE__{} = q) do
     cols = Enum.join(q.columns, ", ")
+    distinct = if Map.get(q, :distinct?), do: "DISTINCT ", else: ""
 
-    "SELECT #{cols} FROM #{q.table}" <>
+    "SELECT #{distinct}#{cols} FROM #{q.table}" <>
       join_clause(q) <>
       where_clause(q) <>
       group_clause(q) <>
