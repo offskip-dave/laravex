@@ -129,6 +129,7 @@ defmodule Laravex.Database.Migrator do
           {:remember_token, true} -> Laravex.Database.Blueprint.remember_token(bp)
           {:timestamps, true} -> Laravex.Database.Blueprint.timestamps(bp)
           {:foreign_id, n, opts} -> Laravex.Database.Blueprint.foreign_id(bp, n, opts)
+          {:text, n} -> Laravex.Database.Blueprint.text(bp, n)
           {:text, n, opts} -> Laravex.Database.Blueprint.text(bp, n, opts)
           {:long_text, n} -> Laravex.Database.Blueprint.long_text(bp, n)
           {:long_text, n, opts} -> Laravex.Database.Blueprint.long_text(bp, n, opts)

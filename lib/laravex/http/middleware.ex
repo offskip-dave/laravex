@@ -99,6 +99,17 @@ defmodule Laravex.Http.Middleware do
 
         {Laravex.Http.Middleware.Authorize, ability: ability, resource: resource}
 
+      "ability" ->
+        {Laravex.Http.Middleware.CheckTokenAbility, ability: arg || ""}
+
+      "abilities" ->
+        list =
+          (arg || "")
+          |> String.split(",", trim: true)
+          |> Enum.map(&String.trim/1)
+
+        {Laravex.Http.Middleware.CheckTokenAbility, abilities: list}
+
       "throttle" ->
         opts =
           cond do

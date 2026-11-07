@@ -216,9 +216,15 @@ defmodule Laravex.Auth.Gate do
 end
 
 defmodule Laravex.Auth.Token do
-  @moduledoc "API token store (Sanctum-like) — SQLite `personal_access_tokens` with ETS cache."
+  @moduledoc """
+  API token store (Sanctum-like) — SQLite `personal_access_tokens` with ETS cache.
+
+  Abilities: `create(user, "api", ["posts:read", "posts:write"])` or `["*"]`.
+  Check via `token_can?/1` / `token_can?/2` after bearer boot.
+  """
 
   @table :laravex_api_tokens
+  @abilities_key :laravex_current_token_abilities
 
   def ensure do
     if :ets.whereis(@table) == :undefined do
@@ -233,13 +239,14 @@ defmodule Laravex.Auth.Token do
     :ok
   end
 
-  def create(user, name \\ "default") do
+  def create(user, name \\ "default", abilities \\ ["*"]) do
     ensure()
     plain = Laravex.Support.Helpers.str_random(40)
     hash = hash_token(plain)
     now = DateTime.utc_now() |> DateTime.to_iso8601()
+    abilities = normalize_abilities(abilities)
 
-    :ets.insert(@table, {hash, %{user_id: user.id, name: name}})
+    :ets.insert(@table, {hash, %{user_id: user.id, name: name, abilities: abilities}})
 
     if table_ready?() do
       Laravex.Database.Query.insert("personal_access_tokens", %{
@@ -247,32 +254,58 @@ defmodule Laravex.Auth.Token do
         "tokenable_id" => user.id,
         "name" => name,
         "token" => hash,
-        "abilities" => "*",
+        "abilities" => encode_abilities(abilities),
         "created_at" => now,
         "updated_at" => now
       })
     end
 
-    %{"plainTextToken" => plain, "accessToken" => hash}
+    %{"plainTextToken" => plain, "accessToken" => hash, "abilities" => abilities}
   end
 
   def find_user(plain_token) when is_binary(plain_token) do
+    case find(plain_token) do
+      %{user: user, abilities: abilities} ->
+        Process.put(@abilities_key, abilities)
+        user
+
+      nil ->
+        Process.delete(@abilities_key)
+        nil
+    end
+  end
+
+  def find(plain_token) when is_binary(plain_token) do
     ensure()
     hash = hash_token(plain_token)
     model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
 
     case :ets.lookup(@table, hash) do
+      [{_, %{user_id: id, abilities: abilities}}] ->
+        case model.find(id) do
+          nil -> nil
+          user -> %{user: user, abilities: abilities || ["*"], token: hash}
+        end
+
       [{_, %{user_id: id}}] ->
-        model.find(id)
+        case model.find(id) do
+          nil -> nil
+          user -> %{user: user, abilities: ["*"], token: hash}
+        end
 
       [] ->
         if table_ready?() do
           case Laravex.Database.Query.table("personal_access_tokens")
                |> Laravex.Database.Query.where("token", hash)
                |> Laravex.Database.Query.first() do
-            %{"tokenable_id" => id} ->
-              :ets.insert(@table, {hash, %{user_id: id, name: "db"}})
-              model.find(id)
+            %{"tokenable_id" => id} = row ->
+              abilities = decode_abilities(row["abilities"])
+              :ets.insert(@table, {hash, %{user_id: id, name: row["name"] || "db", abilities: abilities}})
+
+              case model.find(id) do
+                nil -> nil
+                user -> %{user: user, abilities: abilities, token: hash}
+              end
 
             _ ->
               nil
@@ -280,6 +313,46 @@ defmodule Laravex.Auth.Token do
         else
           nil
         end
+    end
+  end
+
+  @doc "Whether the current bearer token (or given abilities) allows `ability`."
+  def token_can?(ability) when is_binary(ability) or is_atom(ability) do
+    can?(Process.get(@abilities_key), ability)
+  end
+
+  def token_can?(abilities, ability) when is_list(abilities) do
+    can?(abilities, ability)
+  end
+
+  def current_abilities, do: Process.get(@abilities_key)
+
+  def can?(abilities, ability) do
+    ability = to_string(ability)
+
+    case normalize_abilities(abilities) do
+      ["*"] -> true
+      list when is_list(list) -> ability in list or "*" in list
+      _ -> false
+    end
+  end
+
+  defp normalize_abilities(nil), do: ["*"]
+  defp normalize_abilities("*"), do: ["*"]
+  defp normalize_abilities(["*"]), do: ["*"]
+  defp normalize_abilities(list) when is_list(list), do: Enum.map(list, &to_string/1)
+  defp normalize_abilities(other) when is_binary(other), do: decode_abilities(other)
+  defp normalize_abilities(_), do: []
+
+  defp encode_abilities(["*"]), do: "*"
+  defp encode_abilities(list) when is_list(list), do: Laravex.Support.JSON.encode!(list)
+
+  defp decode_abilities(nil), do: ["*"]
+  defp decode_abilities("*"), do: ["*"]
+  defp decode_abilities(json) when is_binary(json) do
+    case Laravex.Support.JSON.decode(json) do
+      {:ok, list} when is_list(list) -> Enum.map(list, &to_string/1)
+      _ -> if json == "*", do: ["*"], else: [json]
     end
   end
 

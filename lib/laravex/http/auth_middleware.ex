@@ -131,3 +131,42 @@ defmodule Laravex.Http.Middleware.ValidateSignature do
     end
   end
 end
+
+defmodule Laravex.Http.Middleware.CheckTokenAbility do
+  @moduledoc """
+  Require bearer token abilities (`ability:posts:read` or `abilities:read,write`).
+  """
+
+  def handle(request, opts) do
+    request = Laravex.Http.Middleware.Authenticate.boot_user(request)
+
+    needed =
+      cond do
+        Keyword.has_key?(opts, :abilities) ->
+          opts
+          |> Keyword.get(:abilities)
+          |> List.wrap()
+          |> Enum.map(&to_string/1)
+
+        Keyword.has_key?(opts, :ability) ->
+          [to_string(Keyword.get(opts, :ability))]
+
+        true ->
+          []
+      end
+
+    cond do
+      is_nil(Laravex.Auth.Guard.user(request)) ->
+        {:halt, Laravex.Http.Response.json(%{message: "Unauthenticated."}, 401)}
+
+      needed == [] ->
+        {:ok, request}
+
+      Enum.all?(needed, &Laravex.Auth.Token.token_can?/1) ->
+        {:ok, request}
+
+      true ->
+        {:halt, Laravex.Http.Response.json(%{message: "Invalid ability provided for token."}, 403)}
+    end
+  end
+end

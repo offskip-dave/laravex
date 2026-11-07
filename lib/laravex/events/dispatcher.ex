@@ -1,5 +1,5 @@
 defmodule Laravex.Events.Dispatcher do
-  @moduledoc "Event dispatcher with listener registration."
+  @moduledoc "Event dispatcher with listener registration (sync + queued)."
   use GenServer
 
   def start_link(_ \\ []), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
@@ -32,9 +32,8 @@ defmodule Laravex.Events.Dispatcher do
   end
 
   def handle_call({:dispatch, event, data}, _from, state) do
-    Enum.each(Map.get(state.listeners, event, []), fn
-      fun when is_function(fun, 1) -> fun.(data)
-      mod when is_atom(mod) -> apply(mod, :handle, [data])
+    Enum.each(Map.get(state.listeners, event, []), fn listener ->
+      invoke_listener(listener, data)
     end)
 
     {:reply, :ok, state}
@@ -42,5 +41,48 @@ defmodule Laravex.Events.Dispatcher do
 
   def handle_call(:listeners, _from, state) do
     {:reply, state.listeners, state}
+  end
+
+  defp invoke_listener(fun, data) when is_function(fun, 1), do: fun.(data)
+
+  defp invoke_listener(mod, data) when is_atom(mod) do
+    if queued_listener?(mod) do
+      Laravex.Queue.Worker.push(Laravex.Events.CallQueuedListener, [mod, data])
+    else
+      apply(mod, :handle, [data])
+    end
+  end
+
+  defp queued_listener?(mod) do
+    Code.ensure_loaded?(mod) and function_exported?(mod, :should_queue?, 0) and mod.should_queue?()
+  end
+end
+
+defmodule Laravex.Events.ShouldQueue do
+  @moduledoc """
+  Opt a listener into the queue (Laravel `ShouldQueue`).
+
+      defmodule App.Listeners.SendWelcome do
+        use Laravex.Events.ShouldQueue
+        def handle(event), do: ...
+      end
+  """
+
+  defmacro __using__(opts \\ []) do
+    queue? = Keyword.get(opts, :queue, true)
+
+    quote do
+      def should_queue?, do: unquote(queue?)
+      defoverridable should_queue?: 0
+    end
+  end
+end
+
+defmodule Laravex.Events.CallQueuedListener do
+  @moduledoc false
+  use Laravex.Queue.Job, queue: true
+
+  def handle([listener, data]) when is_atom(listener) do
+    apply(listener, :handle, [data])
   end
 end

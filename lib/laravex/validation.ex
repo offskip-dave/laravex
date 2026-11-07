@@ -77,168 +77,307 @@ defmodule Laravex.Validation do
   defp normalize_rules(other), do: [other]
 
   defp check(field, value, rules, data) do
-    Enum.flat_map(rules, fn rule ->
-      case rule do
-        mod when is_atom(mod) and mod not in [nil, true, false] ->
-          run_rule_module(field, value, data, mod)
+    rule_strs = Enum.map(rules, &rule_name/1)
 
-        "required" ->
-          if blank?(value), do: ["The #{field} field is required."], else: []
+    if "sometimes" in rule_strs and not field_present?(data, field) do
+      []
+    else
+      Enum.flat_map(rules, fn rule ->
+        case rule do
+          mod when is_atom(mod) and mod not in [nil, true, false] ->
+            run_rule_module(field, value, data, mod)
 
-        "string" ->
-          if is_nil(value) or is_binary(value), do: [], else: ["The #{field} field must be a string."]
+          "required" ->
+            if blank?(value), do: ["The #{field} field is required."], else: []
 
-        "email" ->
-          if is_nil(value) or (is_binary(value) and String.contains?(value, "@")),
-            do: [],
-            else: ["The #{field} field must be a valid email."]
+          "required_if:" <> rest ->
+            conditional_required(field, value, data, rest, :if)
 
-        "confirmed" ->
-          other =
-            Map.get(data, field <> "_confirmation") ||
-              Map.get(data, String.to_atom(field <> "_confirmation"))
+          "required_unless:" <> rest ->
+            conditional_required(field, value, data, rest, :unless)
 
-          if to_string(value || "") == to_string(other || ""),
-            do: [],
-            else: ["The #{field} confirmation does not match."]
+          "prohibited" ->
+            if blank?(value), do: [], else: ["The #{field} field is prohibited."]
 
-        "min:" <> n ->
-          min = String.to_integer(n)
+          "prohibited_if:" <> rest ->
+            conditional_prohibited(field, value, data, rest, :if)
 
-          cond do
-            is_binary(value) and String.length(value) < min ->
-              ["The #{field} field must be at least #{min} characters."]
+          "prohibited_unless:" <> rest ->
+            conditional_prohibited(field, value, data, rest, :unless)
 
-            is_integer(value) and value < min ->
-              ["The #{field} field must be at least #{min}."]
+          "sometimes" ->
+            []
 
-            true ->
-              []
-          end
+          "date" ->
+            if is_nil(value) or blank?(value) or valid_date?(value),
+              do: [],
+              else: ["The #{field} field must be a valid date."]
 
-        "max:" <> n ->
-          max = String.to_integer(n)
+          "date_format:" <> format ->
+            if is_nil(value) or blank?(value) or match_date_format?(value, format),
+              do: [],
+              else: ["The #{field} field must match the format #{format}."]
 
-          cond do
-            is_binary(value) and String.length(value) > max ->
-              ["The #{field} field must not be greater than #{max} characters."]
+          "string" ->
+            if is_nil(value) or is_binary(value), do: [], else: ["The #{field} field must be a string."]
 
-            true ->
-              []
-          end
+          "email" ->
+            if is_nil(value) or (is_binary(value) and String.contains?(value, "@")),
+              do: [],
+              else: ["The #{field} field must be a valid email."]
 
-        "integer" ->
-          if is_nil(value) or is_integer(value) or
-               (is_binary(value) and match?({_, ""}, Integer.parse(value))),
-             do: [],
-             else: ["The #{field} field must be an integer."]
+          "confirmed" ->
+            other =
+              Map.get(data, field <> "_confirmation") ||
+                Map.get(data, String.to_atom(field <> "_confirmation"))
 
-        "boolean" ->
-          if value in [true, false, 1, 0, "1", "0", "true", "false", nil],
-            do: [],
-            else: ["The #{field} field must be true or false."]
+            if to_string(value || "") == to_string(other || ""),
+              do: [],
+              else: ["The #{field} confirmation does not match."]
 
-        "nullable" ->
-          []
+          "min:" <> n ->
+            min = String.to_integer(n)
 
-        "file" ->
-          case value do
-            %Laravex.Http.UploadedFile{} -> []
-            nil -> []
-            _ -> ["The #{field} field must be a file."]
-          end
+            cond do
+              is_binary(value) and String.length(value) < min ->
+                ["The #{field} field must be at least #{min} characters."]
 
-        "image" ->
-          case value do
-            %Laravex.Http.UploadedFile{} = f ->
-              if Laravex.Http.UploadedFile.image?(f),
-                do: [],
-                else: ["The #{field} field must be an image."]
+              is_integer(value) and value < min ->
+                ["The #{field} field must be at least #{min}."]
 
-            nil ->
-              []
+              true ->
+                []
+            end
 
-            _ ->
-              ["The #{field} field must be an image."]
-          end
+          "max:" <> n ->
+            max = String.to_integer(n)
 
-        "in:" <> list ->
-          allowed = String.split(list, ",")
+            cond do
+              is_binary(value) and String.length(value) > max ->
+                ["The #{field} field must not be greater than #{max} characters."]
 
-          if is_nil(value) or to_string(value) in allowed,
-            do: [],
-            else: ["The selected #{field} is invalid."]
+              true ->
+                []
+            end
 
-        "regex:" <> pattern ->
-          {:ok, re} = Regex.compile(pattern)
+          "integer" ->
+            if is_nil(value) or is_integer(value) or
+                 (is_binary(value) and match?({_, ""}, Integer.parse(value))),
+               do: [],
+               else: ["The #{field} field must be an integer."]
 
-          if is_nil(value) or (is_binary(value) and Regex.match?(re, value)),
-            do: [],
-            else: ["The #{field} format is invalid."]
+          "boolean" ->
+            if value in [true, false, 1, 0, "1", "0", "true", "false", nil],
+              do: [],
+              else: ["The #{field} field must be true or false."]
 
-        "unique:" <> rest ->
-          unique_error(field, value, rest)
+          "nullable" ->
+            []
 
-        "exists:" <> rest ->
-          exists_error(field, value, rest)
+          "file" ->
+            case value do
+              %Laravex.Http.UploadedFile{} -> []
+              nil -> []
+              _ -> ["The #{field} field must be a file."]
+            end
 
-        "array" ->
-          if is_nil(value) or is_list(value) or is_map(value),
-            do: [],
-            else: ["The #{field} field must be an array."]
+          "image" ->
+            case value do
+              %Laravex.Http.UploadedFile{} = f ->
+                if Laravex.Http.UploadedFile.image?(f),
+                  do: [],
+                  else: ["The #{field} field must be an image."]
 
-        "filled" ->
-          if blank?(value), do: ["The #{field} field must have a value."], else: []
+              nil ->
+                []
 
-        "same:" <> other_field ->
-          other = Map.get(data, other_field) || Map.get(data, String.to_atom(other_field))
+              _ ->
+                ["The #{field} field must be an image."]
+            end
 
-          if to_string(value || "") == to_string(other || ""),
-            do: [],
-            else: ["The #{field} and #{other_field} must match."]
+          "in:" <> list ->
+            allowed = String.split(list, ",")
 
-        "between:" <> rest ->
-          case String.split(rest, ",") do
-            [a, b] ->
-              min = String.to_integer(String.trim(a))
-              max = String.to_integer(String.trim(b))
+            if is_nil(value) or to_string(value) in allowed,
+              do: [],
+              else: ["The selected #{field} is invalid."]
 
-              cond do
-                is_binary(value) and (String.length(value) < min or String.length(value) > max) ->
-                  ["The #{field} field must be between #{min} and #{max} characters."]
+          "regex:" <> pattern ->
+            {:ok, re} = Regex.compile(pattern)
 
-                is_integer(value) and (value < min or value > max) ->
-                  ["The #{field} field must be between #{min} and #{max}."]
+            if is_nil(value) or (is_binary(value) and Regex.match?(re, value)),
+              do: [],
+              else: ["The #{field} format is invalid."]
 
-                true ->
-                  []
-              end
+          "unique:" <> rest ->
+            unique_error(field, value, rest)
 
-            _ ->
-              []
-          end
+          "exists:" <> rest ->
+            exists_error(field, value, rest)
 
-        "digits:" <> n ->
-          len = String.to_integer(n)
+          "array" ->
+            if is_nil(value) or is_list(value) or is_map(value),
+              do: [],
+              else: ["The #{field} field must be an array."]
 
-          if is_binary(value) and Regex.match?(~r/^\d+$/, value) and String.length(value) == len,
-            do: [],
-            else: ["The #{field} field must be #{len} digits."]
+          "filled" ->
+            if blank?(value), do: ["The #{field} field must have a value."], else: []
 
-        "size:" <> n ->
-          size = String.to_integer(n)
+          "same:" <> other_field ->
+            other = Map.get(data, other_field) || Map.get(data, String.to_atom(other_field))
 
-          cond do
-            is_binary(value) and String.length(value) == size -> []
-            is_list(value) and length(value) == size -> []
-            true -> ["The #{field} field must be #{size}."]
-          end
+            if to_string(value || "") == to_string(other || ""),
+              do: [],
+              else: ["The #{field} and #{other_field} must match."]
 
-        other ->
-          custom_rule(field, value, other)
-      end
-    end)
+          "between:" <> rest ->
+            case String.split(rest, ",") do
+              [a, b] ->
+                min = String.to_integer(String.trim(a))
+                max = String.to_integer(String.trim(b))
+
+                cond do
+                  is_binary(value) and (String.length(value) < min or String.length(value) > max) ->
+                    ["The #{field} field must be between #{min} and #{max} characters."]
+
+                  is_integer(value) and (value < min or value > max) ->
+                    ["The #{field} field must be between #{min} and #{max}."]
+
+                  true ->
+                    []
+                end
+
+              _ ->
+                []
+            end
+
+          "digits:" <> n ->
+            len = String.to_integer(n)
+
+            if is_binary(value) and Regex.match?(~r/^\d+$/, value) and String.length(value) == len,
+              do: [],
+              else: ["The #{field} field must be #{len} digits."]
+
+          "size:" <> n ->
+            size = String.to_integer(n)
+
+            cond do
+              is_binary(value) and String.length(value) == size -> []
+              is_list(value) and length(value) == size -> []
+              true -> ["The #{field} field must be #{size}."]
+            end
+
+          other ->
+            custom_rule(field, value, other)
+        end
+      end)
+    end
   end
+
+  defp rule_name(rule) when is_binary(rule), do: rule |> String.split(":", parts: 2) |> hd()
+  defp rule_name(rule) when is_atom(rule), do: to_string(rule)
+  defp rule_name(_), do: ""
+
+  defp field_present?(data, field) do
+    Map.has_key?(data, field) or Map.has_key?(data, String.to_atom(field))
+  end
+
+  defp data_get(data, field) do
+    Map.get(data, field) || Map.get(data, String.to_atom(field))
+  end
+
+  defp conditional_required(field, value, data, rest, mode) do
+    case String.split(rest, ",", parts: 2) do
+      [other, expected] ->
+        other = String.trim(other)
+        expected = String.trim(expected)
+        other_val = to_string(data_get(data, other) || "")
+        match? = other_val == expected
+
+        required? =
+          case mode do
+            :if -> match?
+            :unless -> not match?
+          end
+
+        if required? and blank?(value) do
+          msg =
+            case mode do
+              :if -> "The #{field} field is required when #{other} is #{expected}."
+              :unless -> "The #{field} field is required unless #{other} is #{expected}."
+            end
+
+          [msg]
+        else
+          []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp conditional_prohibited(field, value, data, rest, mode) do
+    case String.split(rest, ",", parts: 2) do
+      [other, expected] ->
+        other = String.trim(other)
+        expected = String.trim(expected)
+        other_val = to_string(data_get(data, other) || "")
+        match? = other_val == expected
+
+        prohibited? =
+          case mode do
+            :if -> match?
+            :unless -> not match?
+          end
+
+        if prohibited? and not blank?(value) do
+          ["The #{field} field is prohibited."]
+        else
+          []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp valid_date?(value) when is_binary(value) do
+    cond do
+      match?({:ok, _}, Date.from_iso8601(value)) -> true
+      match?({:ok, _, _}, DateTime.from_iso8601(value)) -> true
+      Regex.match?(~r/^\d{4}-\d{2}-\d{2}/, value) ->
+        case Date.from_iso8601(String.slice(value, 0, 10)) do
+          {:ok, _} -> true
+          _ -> false
+        end
+
+      true ->
+        false
+    end
+  end
+
+  defp valid_date?(%Date{}), do: true
+  defp valid_date?(%DateTime{}), do: true
+  defp valid_date?(%NaiveDateTime{}), do: true
+  defp valid_date?(_), do: false
+
+  defp match_date_format?(value, "Y-m-d") when is_binary(value),
+    do: match?({:ok, _}, Date.from_iso8601(value))
+
+  defp match_date_format?(value, "Y-m-d H:i:s") when is_binary(value) do
+    case NaiveDateTime.from_iso8601(String.replace(value, " ", "T")) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  end
+
+  defp match_date_format?(value, format) when is_binary(value) and is_binary(format) do
+    # Fallback: treat as ISO-ish when format unrecognized
+    valid_date?(value)
+  end
+
+  defp match_date_format?(_, _), do: false
 
   defp unique_error(_field, nil, _), do: []
   defp unique_error(_field, "", _), do: []

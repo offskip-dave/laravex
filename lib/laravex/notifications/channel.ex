@@ -181,15 +181,21 @@ defmodule Laravex.Notifications.Notifier do
     )
 
     if Laravex.Database.Schema.has_table?("notifications") do
-      Laravex.Database.Query.insert("notifications", %{
-        "id" => Laravex.Support.Helpers.str_random(36),
-        "type" => to_string(notification),
-        "notifiable_type" => to_string(notifiable.__struct__),
-        "notifiable_id" => Map.get(notifiable, :id),
-        "data" => Laravex.Support.JSON.encode!(data),
-        "created_at" => now,
-        "updated_at" => now
-      })
+      Laravex.Database.Connection.execute(
+        """
+        INSERT INTO notifications (id, type, notifiable_type, notifiable_id, data, read_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+        """,
+        [
+          Laravex.Support.Str.uuid(),
+          to_string(notification),
+          to_string(notifiable.__struct__),
+          Map.get(notifiable, :id),
+          Laravex.Support.JSON.encode!(data),
+          now,
+          now
+        ]
+      )
     end
   rescue
     _ -> :ok
@@ -197,7 +203,7 @@ defmodule Laravex.Notifications.Notifier do
 end
 
 defmodule Laravex.Notifications.Notifiable do
-  @moduledoc "Mixin for models that can receive notifications."
+  @moduledoc "Mixin for models that can receive notifications (inbox helpers included)."
 
   defmacro __using__(_opts) do
     quote do
@@ -205,10 +211,93 @@ defmodule Laravex.Notifications.Notifiable do
         Laravex.Notifications.Notifier.send(model, notification)
       end
 
+      def notifications(%__MODULE__{} = model) do
+        Laravex.Notifications.Notifiable.notifications_for(model)
+      end
+
+      def unread_notifications(%__MODULE__{} = model) do
+        Laravex.Notifications.Notifiable.unread_for(model)
+      end
+
+      def mark_notification_as_read(%__MODULE__{} = model, id) do
+        Laravex.Notifications.Notifiable.mark_as_read(model, id)
+      end
+
+      def mark_notifications_as_read(%__MODULE__{} = model) do
+        Laravex.Notifications.Notifiable.mark_all_as_read(model)
+      end
+
       def route_notification_for_mail(%{email: email}), do: email
       def route_notification_for_mail(_), do: nil
 
       defoverridable route_notification_for_mail: 1
     end
+  end
+
+  def notifications_for(%{__struct__: mod, id: id}) do
+    query_for(mod, id)
+    |> Laravex.Database.Query.order_by_desc("created_at")
+    |> Laravex.Database.Query.get()
+    |> Enum.map(&decode_row/1)
+  end
+
+  def unread_for(%{__struct__: mod, id: id}) do
+    query_for(mod, id)
+    |> Laravex.Database.Query.where_null("read_at")
+    |> Laravex.Database.Query.order_by_desc("created_at")
+    |> Laravex.Database.Query.get()
+    |> Enum.map(&decode_row/1)
+  end
+
+  def mark_as_read(%{__struct__: mod, id: id}, notification_id) do
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    if Laravex.Database.Schema.has_table?("notifications") do
+      Laravex.Database.Connection.execute(
+        """
+        UPDATE notifications SET read_at = ?, updated_at = ?
+        WHERE id = ? AND notifiable_type = ? AND notifiable_id = ?
+        """,
+        [now, now, to_string(notification_id), to_string(mod), id]
+      )
+    end
+
+    :ok
+  end
+
+  def mark_all_as_read(%{__struct__: mod, id: id}) do
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    if Laravex.Database.Schema.has_table?("notifications") do
+      Laravex.Database.Connection.execute(
+        """
+        UPDATE notifications SET read_at = ?, updated_at = ?
+        WHERE notifiable_type = ? AND notifiable_id = ? AND read_at IS NULL
+        """,
+        [now, now, to_string(mod), id]
+      )
+    end
+
+    :ok
+  end
+
+  defp query_for(mod, id) do
+    unless Laravex.Database.Schema.has_table?("notifications") do
+      raise "notifications table is missing — run migrations first"
+    end
+
+    Laravex.Database.Query.table("notifications")
+    |> Laravex.Database.Query.where("notifiable_type", to_string(mod))
+    |> Laravex.Database.Query.where("notifiable_id", id)
+  end
+
+  defp decode_row(row) do
+    data =
+      case Laravex.Support.JSON.decode(row["data"] || "{}") do
+        {:ok, map} -> map
+        _ -> %{}
+      end
+
+    Map.put(row, "data", data)
   end
 end

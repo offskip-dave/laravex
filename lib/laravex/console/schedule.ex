@@ -1,5 +1,11 @@
 defmodule Laravex.Console.Schedule do
-  @moduledoc "Task scheduling registry (schedule:run) with cron-style expressions."
+  @moduledoc """
+  Task scheduling registry (`schedule:run`) with cron-style expressions.
+
+  Options on `call/3`:
+  - `without_overlapping: true` — skip if a previous run of the same task is still marked running
+  - `name:` — stable mutex key (defaults to a hash of the expression)
+  """
 
   @table :laravex_schedule
 
@@ -26,16 +32,23 @@ defmodule Laravex.Console.Schedule do
     :ok
   end
 
-  def command(name, expression) do
-    call(expression, fn -> Laravex.Console.Router.dispatch(name) end)
+  def command(name, expression, opts \\ []) do
+    call(expression, fn -> Laravex.Console.Router.dispatch(name) end, opts)
   end
 
   def run(now \\ :calendar.universal_time()) do
     ensure()
 
     :ets.lookup(@table, :task)
-    |> Enum.each(fn {:task, %{expression: expr, fun: fun}} ->
-      if due?(expr, now), do: fun.()
+    |> Enum.each(fn
+      {:task, %{expression: expr, fun: fun, opts: opts}} ->
+        if due?(expr, now), do: run_task(fun, opts || [])
+
+      {:task, %{expression: expr, fun: fun}} ->
+        if due?(expr, now), do: run_task(fun, [])
+
+      _ ->
+        :ok
     end)
 
     :ok
@@ -52,7 +65,6 @@ defmodule Laravex.Console.Schedule do
 
     case expression do
       "everyMinute" ->
-        # Due once per distinct minute wall-clock (tracked in ETS)
         mark_and_check({:everyMinute, y, mo, d, h, mi})
 
       "hourly" ->
@@ -71,6 +83,43 @@ defmodule Laravex.Console.Schedule do
         false
     end
   end
+
+  defp run_task(fun, opts) do
+    if Keyword.get(opts, :without_overlapping, false) do
+      key = mutex_key(opts)
+      expires = Keyword.get(opts, :expires_at, 3600)
+
+      if acquire_mutex(key, expires) do
+        try do
+          fun.()
+        after
+          release_mutex(key)
+        end
+      else
+        :skipped
+      end
+    else
+      fun.()
+    end
+  end
+
+  defp mutex_key(opts) do
+    name = Keyword.get(opts, :name) || Keyword.get(opts, :mutex) || "schedule-task"
+    "schedule:overlap:" <> to_string(name)
+  end
+
+  defp acquire_mutex(key, expires) do
+    case Laravex.Cache.Manager.get(key) do
+      nil ->
+        Laravex.Cache.Manager.put(key, true, expires)
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  defp release_mutex(key), do: Laravex.Cache.Manager.forget(key)
 
   defp mark_and_check(key) do
     ensure()

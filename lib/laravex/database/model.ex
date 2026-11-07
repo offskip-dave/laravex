@@ -202,6 +202,18 @@ defmodule Laravex.Database.Model do
         Laravex.Database.Model.with_counts(models, __MODULE__, relations)
       end
 
+      def refresh(%__MODULE__{id: id} = model) when not is_nil(id) do
+        Laravex.Database.Model.refresh(model)
+      end
+
+      def increment(%__MODULE__{} = model, column, amount \\ 1) do
+        Laravex.Database.Model.increment(model, column, amount)
+      end
+
+      def decrement(%__MODULE__{} = model, column, amount \\ 1) do
+        Laravex.Database.Model.decrement(model, column, amount)
+      end
+
       def from_row(row) when is_map(row) do
         new(row)
       end
@@ -562,6 +574,28 @@ defmodule Laravex.Database.Model do
       {key, cast_one(Map.get(casts, key), v)}
     end)
   end
+
+  def refresh(%{__struct__: mod, id: id} = model) when not is_nil(id) do
+    opts = if function_exported?(mod, :soft_deletes?, 0) and mod.soft_deletes?(), do: [with_trashed: true], else: []
+    mod.find(id, opts) || model
+  end
+
+  def refresh(model), do: model
+
+  def increment(%{__struct__: mod, id: id} = model, column, amount \\ 1)
+      when not is_nil(id) and is_integer(amount) do
+    col = to_string(column)
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    Laravex.Database.Connection.execute(
+      "UPDATE #{mod.table_name()} SET #{col} = COALESCE(#{col}, 0) + ?, updated_at = ? WHERE id = ?",
+      [amount, now, id]
+    )
+
+    refresh(model)
+  end
+
+  def decrement(model, column, amount \\ 1), do: increment(model, column, -amount)
 
   def touch(model, attr \\ "updated_at")
 
