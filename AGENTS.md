@@ -55,6 +55,7 @@ Password resets use `Laravex.Auth.Password` + `password_reset_tokens` (wired by 
 - CORS: `config/cors.exs` (loaded automatically). Artisan: `env`, `key:generate`, `about`, `down`/`up`, `route:cache`/`route:clear`, `optimize`/`optimize:clear`.
 - Request helpers: `wants_json?/1`, `ajax?/1`, `accepts?/2`, `full_url/1`, `ip/1`, `secure?/1`. Filesystem disks: local driver only (non-local raises). Cache stores: `array`/`file`/`database` only.
 - Blade `@json($var)`; Collection `sort_by`/`first_where`/`flat_map`; `cookie/3` queues via `AddQueuedCookies`.
+- Sessions: `file` or `database` driver (`SESSION_DRIVER`) with lifetime + lottery GC. FormRequest via route `form_request:`; `validated/0` helper. Artisan: `schedule:list`, `event:list`. Validation `Rule` modules; Eloquex mutators run on `save/1`. Outbound HTTP: `Laravex.Http.Client` / `http()`.
 - Policies live in `app/Policies/*Policy.ex` and resolve via `Laravex.Auth.Gate`.
 - Prefer extending `lib/laravex/*` for framework behavior; keep `app/` for application code.
 

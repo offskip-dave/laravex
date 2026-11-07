@@ -82,7 +82,14 @@ defmodule Laravex.Database.Model do
       end
 
       def save(%__MODULE__{id: nil} = model) do
-        create(Map.from_struct(model))
+        attrs =
+          model
+          |> Map.from_struct()
+          |> Map.drop([:__struct__, :id, :__relations__])
+          |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+          |> Map.new(fn {k, v} -> {to_string(k), v} end)
+
+        create(attrs)
       end
 
       def save(%__MODULE__{id: id} = model) do
@@ -95,6 +102,8 @@ defmodule Laravex.Database.Model do
           else
             changes
             |> Map.new(fn {k, v} -> {to_string(k), v} end)
+            |> then(&Laravex.Database.Model.apply_mutators(__MODULE__, &1))
+            |> then(&Laravex.Database.Model.apply_persist_casts(&1, __MODULE__))
             |> Map.put("updated_at", now)
           end
 
@@ -342,11 +351,20 @@ defmodule Laravex.Database.Model do
         apply(mod, accessor, [value])
 
       Map.has_key?(model, key_atom) ->
-        Map.get(model, key_atom)
+        cast_out(mod, to_string(key), Map.get(model, key_atom))
 
       true ->
         nil
     end
+  end
+
+  def apply_persist_casts(attrs, mod) when is_map(attrs) do
+    casts = if function_exported?(mod, :casts, 0), do: stringify(mod.casts()), else: %{}
+
+    Map.new(attrs, fn {k, v} ->
+      key = to_string(k)
+      {key, cast_one(Map.get(casts, key), v)}
+    end)
   end
 
   def touch(model, attr \\ "updated_at")
@@ -390,14 +408,28 @@ defmodule Laravex.Database.Model do
 
   def apply_mutators(mod, attrs) when is_map(attrs) do
     Map.new(attrs, fn {k, v} ->
-      mutator = :"set_#{k}_attribute"
+      key = to_string(k)
+      mutator = :"set_#{key}_attribute"
 
       if function_exported?(mod, mutator, 1) do
-        {k, apply(mod, mutator, [v])}
+        {key, apply(mod, mutator, [v])}
       else
-        {k, v}
+        {key, v}
       end
     end)
+  end
+
+  defp cast_out(mod, key, value) do
+    casts = if function_exported?(mod, :casts, 0), do: stringify(mod.casts()), else: %{}
+
+    case Map.get(casts, key) do
+      :boolean -> cast_one(:boolean, value)
+      :json -> cast_one(:json, value)
+      :array -> cast_one(:array, value)
+      :datetime -> value
+      :hashed -> value
+      _ -> value
+    end
   end
 
   def to_map(model) do

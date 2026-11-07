@@ -15,10 +15,10 @@ defmodule Laravex.Validation do
 
   def validate(data, rules) when is_map(data) and is_map(rules) do
     errors =
-      Enum.reduce(rules, %{}, fn {field, rule_str}, acc ->
+      Enum.reduce(rules, %{}, fn {field, rule_spec}, acc ->
         field = to_string(field)
         value = Map.get(data, field) || Map.get(data, String.to_atom(field))
-        field_errors = check(field, value, String.split(to_string(rule_str), "|"), data)
+        field_errors = check(field, value, normalize_rules(rule_spec), data)
 
         if field_errors == [] do
           acc
@@ -71,9 +71,17 @@ defmodule Laravex.Validation do
     |> then(fn r -> %{r | errors: errors, old: request.params} end)
   end
 
+  defp normalize_rules(rules) when is_binary(rules), do: String.split(rules, "|", trim: true)
+  defp normalize_rules(rules) when is_list(rules), do: rules
+  defp normalize_rules(rule) when is_atom(rule), do: [rule]
+  defp normalize_rules(other), do: [other]
+
   defp check(field, value, rules, data) do
     Enum.flat_map(rules, fn rule ->
       case rule do
+        mod when is_atom(mod) and mod not in [nil, true, false] ->
+          run_rule_module(field, value, data, mod)
+
         "required" ->
           if blank?(value), do: ["The #{field} field is required."], else: []
 
@@ -284,7 +292,7 @@ defmodule Laravex.Validation do
   end
 
   defp custom_rule(field, value, rule_name) do
-    mod_name = "App.Rules." <> Macro.camelize(rule_name)
+    mod_name = "App.Rules." <> Macro.camelize(to_string(rule_name))
 
     mod =
       try do
@@ -293,13 +301,27 @@ defmodule Laravex.Validation do
         ArgumentError -> Module.concat([mod_name])
       end
 
+    run_rule_module(field, value, %{}, mod)
+  end
+
+  defp run_rule_module(field, value, data, mod) do
     case Code.ensure_loaded(mod) do
       {:module, ^mod} ->
         cond do
+          function_exported?(mod, :passes?, 3) ->
+            if mod.passes?(field, value, data), do: [], else: [rule_message(mod)]
+
           function_exported?(mod, :passes?, 2) ->
-            if mod.passes?(field, value),
-              do: [],
-              else: [if(function_exported?(mod, :message, 0), do: mod.message(), else: "validation failed")]
+            if mod.passes?(field, value), do: [], else: [rule_message(mod)]
+
+          function_exported?(mod, :validate, 3) ->
+            case mod.validate(field, value, data) do
+              :ok -> []
+              {:error, msg} -> [msg]
+              true -> []
+              false -> [rule_message(mod)]
+              _ -> []
+            end
 
           true ->
             []
@@ -310,13 +332,44 @@ defmodule Laravex.Validation do
     end
   end
 
+  defp rule_message(mod) do
+    cond do
+      function_exported?(mod, :message, 0) -> mod.message()
+      true -> "validation failed"
+    end
+  end
+
   defp blank?(nil), do: true
   defp blank?(""), do: true
   defp blank?(_), do: false
 end
 
+defmodule Laravex.Validation.Rule do
+  @moduledoc """
+  Custom validation rule behaviour (Laravel `ValidationRule` / `Rule` objects).
+
+      defmodule App.Rules.Uppercase do
+        @behaviour Laravex.Validation.Rule
+        def passes?(_attr, value), do: is_binary(value) and value == String.upcase(value)
+        def message, do: "must be uppercase"
+      end
+
+  Use in rules as a module atom or list entry:
+
+      %{"code" => ["required", App.Rules.Uppercase]}
+  """
+
+  @callback passes?(attribute :: String.t(), value :: term()) :: boolean()
+  @callback message() :: String.t()
+  @optional_callbacks message: 0
+end
+
 defmodule Laravex.Http.FormRequest do
-  @moduledoc "Base form request behaviour."
+  @moduledoc """
+  Base form request behaviour.
+
+  Attach via route opts: `form_request: App.Http.Requests.StorePost`.
+  """
 
   @callback rules() :: map()
   @callback authorize(request :: map()) :: boolean()
@@ -331,10 +384,32 @@ defmodule Laravex.Http.FormRequest do
         unless authorize(request),
           do: raise(Laravex.Http.HttpException, status: 403, message: "Forbidden")
 
-        Laravex.Validation.validate_request(request, rules())
+        case Laravex.Validation.validate_request(request, rules()) do
+          {:ok, validated, request} ->
+            request = %{request | validated: validated}
+            Process.put(:laravex_request, request)
+            {:ok, request}
+
+          {:error, errors, request} ->
+            {:error, errors, request}
+        end
       end
 
       defoverridable authorize: 1
+    end
+  end
+
+  def resolve(request, form_mod) when is_atom(form_mod) do
+    case form_mod.validate_request(request) do
+      {:ok, request} ->
+        request
+
+      {:error, errors, request} ->
+        if Laravex.Http.Request.wants_json?(request) or Laravex.Http.Request.ajax?(request) do
+          raise Laravex.Validation.Failed, errors: errors, request: request
+        else
+          raise Laravex.Validation.Failed, errors: errors, request: request
+        end
     end
   end
 end

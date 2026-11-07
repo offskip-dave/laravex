@@ -127,12 +127,23 @@ defmodule Laravex.Routing.Router do
     end
   end
 
-  def invoke(handler, request, _opts \\ [])
+  def invoke(handler, request, opts \\ [])
 
-  def invoke(handler, request, _opts) when is_function(handler, 1), do: handler.(request)
+  def invoke(handler, request, opts) when is_function(handler, 1) do
+    request = maybe_form_request(request, opts)
+    handler.(request)
+  end
 
-  def invoke({mod, fun}, request, _opts) when is_atom(mod) and is_atom(fun) do
+  def invoke({mod, fun}, request, opts) when is_atom(mod) and is_atom(fun) do
+    request = maybe_form_request(request, opts)
     apply(mod, fun, [request])
+  end
+
+  defp maybe_form_request(request, opts) do
+    case Keyword.get(opts || [], :form_request) do
+      nil -> request
+      form_mod when is_atom(form_mod) -> Laravex.Http.FormRequest.resolve(request, form_mod)
+    end
   end
 
   def url(name, params \\ %{}) do

@@ -121,6 +121,18 @@ defmodule Laravex.Support.Helpers do
 
   def collect(enumerable), do: Laravex.Support.Collection.new(enumerable)
 
+  def validated(key \\ nil) do
+    case Process.get(:laravex_request) do
+      %{validated: validated} when is_map(validated) ->
+        if is_nil(key), do: validated, else: Map.get(validated, to_string(key))
+
+      _ ->
+        if is_nil(key), do: %{}, else: nil
+    end
+  end
+
+  def http, do: Laravex.Http.Client
+
   def cookie(name) when is_binary(name) or is_atom(name) do
     case Process.get(:laravex_request) do
       %{cookies: cookies} when is_map(cookies) ->

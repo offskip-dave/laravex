@@ -21,6 +21,10 @@ defmodule Laravex.Events.Dispatcher do
     GenServer.call(__MODULE__, {:dispatch, event_name, data})
   end
 
+  def listeners do
+    GenServer.call(__MODULE__, :listeners)
+  end
+
   @impl true
   def handle_call({:listen, event, listener}, _from, state) do
     listeners = Map.update(state.listeners, event, [listener], &(&1 ++ [listener]))
@@ -34,5 +38,9 @@ defmodule Laravex.Events.Dispatcher do
     end)
 
     {:reply, :ok, state}
+  end
+
+  def handle_call(:listeners, _from, state) do
+    {:reply, state.listeners, state}
   end
 end

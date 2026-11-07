@@ -23,6 +23,8 @@ defmodule Laravex.Console.Kernel do
     "optimize:clear" => {&__MODULE__.cmd_optimize_clear/1, "Remove cached bootstrap files"},
     "queue:work" => {&__MODULE__.cmd_queue_work/1, "Process queue jobs"},
     "schedule:run" => {&__MODULE__.cmd_schedule/1, "Run due scheduled tasks"},
+    "schedule:list" => {&__MODULE__.cmd_schedule_list/1, "List all scheduled tasks"},
+    "event:list" => {&__MODULE__.cmd_event_list/1, "List registered events and listeners"},
     "tinker" => {&__MODULE__.cmd_tinker/1, "Interact with the application"},
     "storage:link" => {&__MODULE__.cmd_storage_link/1, "Link public storage"},
     "down" => {&__MODULE__.cmd_down/1, "Put the application into maintenance mode"},
@@ -194,6 +196,60 @@ defmodule Laravex.Console.Kernel do
   end
 
   def cmd_schedule(_), do: Laravex.Console.Schedule.run()
+
+  def cmd_schedule_list(_) do
+    tasks = Laravex.Console.Schedule.all()
+
+    if tasks == [] do
+      IO.puts("No scheduled tasks have been defined.")
+    else
+      IO.puts(String.pad_trailing("Expression", 24) <> "Command / Callback")
+      IO.puts(String.duplicate("-", 60))
+
+      Enum.each(tasks, fn task ->
+        expr = Map.get(task, :expression) || "?"
+        label = describe_schedule_task(task)
+        IO.puts(String.pad_trailing(to_string(expr), 24) <> label)
+      end)
+    end
+  end
+
+  def cmd_event_list(_) do
+    provider_map =
+      if Code.ensure_loaded?(App.Providers.EventServiceProvider) and
+           function_exported?(App.Providers.EventServiceProvider, :listen, 0) do
+        App.Providers.EventServiceProvider.listen()
+      else
+        %{}
+      end
+
+    runtime_map =
+      try do
+        Laravex.Events.Dispatcher.listeners()
+      rescue
+        _ -> %{}
+      end
+
+    events =
+      (Map.keys(provider_map) ++ Map.keys(runtime_map))
+      |> Enum.uniq()
+      |> Enum.sort_by(&to_string/1)
+
+    if events == [] do
+      IO.puts("No events have been registered.")
+    else
+      Enum.each(events, fn event ->
+        listeners =
+          List.wrap(Map.get(provider_map, event)) ++ List.wrap(Map.get(runtime_map, event))
+
+        IO.puts(inspect(event))
+
+        Enum.each(Enum.uniq(listeners), fn listener ->
+          IO.puts("  ⇂ #{inspect(listener)}")
+        end)
+      end)
+    end
+  end
 
   def cmd_tinker(_) do
     IO.puts("Laravex Tinker (exit/quit to leave)")
@@ -419,6 +475,8 @@ defmodule Laravex.Console.Kernel do
 
   defp rule_stub(name), do: """
   defmodule App.Rules.#{name} do
+    @behaviour Laravex.Validation.Rule
+
     def passes?(_attribute, _value), do: true
     def message, do: "validation failed"
   end
@@ -430,5 +488,20 @@ defmodule Laravex.Console.Kernel do
     def boot, do: :ok
   end
   """
+
+  defp describe_schedule_task(%{opts: opts} = task) do
+    cond do
+      is_binary(Keyword.get(opts || [], :description)) ->
+        Keyword.get(opts, :description)
+
+      is_binary(Keyword.get(opts || [], :command)) ->
+        Keyword.get(opts, :command)
+
+      true ->
+        inspect(Map.get(task, :fun))
+    end
+  end
+
+  defp describe_schedule_task(_), do: "(callback)"
 
 end

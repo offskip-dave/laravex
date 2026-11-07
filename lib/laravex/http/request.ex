@@ -17,7 +17,8 @@ defmodule Laravex.Http.Request do
             errors: %{},
             old: %{},
             flash: %{},
-            peer: nil
+            peer: nil,
+            validated: %{}
 
   def capture(method, path, headers \\ %{}, body \\ "", opts \\ []) do
     {path, query} = split_path(path)
