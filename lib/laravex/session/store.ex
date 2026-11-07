@@ -61,6 +61,15 @@ defmodule Laravex.Session.Store do
     Map.take(session, keys)
   end
 
+  @doc "Previous request URL stored by the HTTP kernel (Laravel `previousUrl`)."
+  def previous_url(request_or_session, fallback \\ nil)
+
+  def previous_url(%{session: session}, fallback), do: previous_url(session, fallback)
+
+  def previous_url(session, fallback) when is_map(session) do
+    Map.get(session, "_previous.url", fallback)
+  end
+
   @doc "Flash data for the *next* request (Laravel session()->flash)."
   def flash(request, key, value) do
     bag = flash_bag(request.session)

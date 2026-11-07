@@ -117,6 +117,8 @@ defmodule Laravex.Validation do
 
   defp exclude_rule?("exclude_if:" <> _), do: true
   defp exclude_rule?("exclude_unless:" <> _), do: true
+  defp exclude_rule?("exclude_with:" <> _), do: true
+  defp exclude_rule?("exclude_without:" <> _), do: true
   defp exclude_rule?("exclude"), do: true
   defp exclude_rule?(_), do: false
 
@@ -140,6 +142,20 @@ defmodule Laravex.Validation do
       _ ->
         false
     end
+  end
+
+  defp exclude_applies?("exclude_with:" <> rest, data) do
+    rest
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.any?(&filled_field?(data, &1))
+  end
+
+  defp exclude_applies?("exclude_without:" <> rest, data) do
+    rest
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.any?(&(not filled_field?(data, &1)))
   end
 
   defp exclude_applies?(_, _), do: false
@@ -699,8 +715,31 @@ defmodule Laravex.Validation do
         flags = rest |> String.split(",") |> Enum.map(&String.trim/1)
         password_rule(field, value, flags)
 
+      "current_password" ->
+        current_password_rule(field, value)
+
       other ->
         custom_rule(field, value, other)
+    end
+  end
+
+  defp current_password_rule(_field, value) when is_nil(value) or value == "" do
+    ["The password is incorrect."]
+  end
+
+  defp current_password_rule(_field, value) do
+    request = Process.get(:laravex_request)
+    user = if request, do: Laravex.Auth.Guard.user(request), else: nil
+
+    cond do
+      is_nil(user) ->
+        ["The password is incorrect."]
+
+      Laravex.Hashing.Hash.check(to_string(value), Map.get(user, :password) || "") ->
+        []
+
+      true ->
+        ["The password is incorrect."]
     end
   end
 

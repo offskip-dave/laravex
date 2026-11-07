@@ -200,6 +200,29 @@ end
 defmodule Laravex.Auth.Gate do
   @moduledoc "Gate + policy registry (Laravel Gate / Policy conventions)."
 
+  defmodule UserGate do
+    @moduledoc "User-scoped Gate proxy (Laravel `Gate::forUser`)."
+    defstruct [:user]
+
+    def allows?(%__MODULE__{user: user}, ability, resource \\ nil),
+      do: Laravex.Auth.Gate.allows?(user, ability, resource)
+
+    def denies?(%__MODULE__{user: user}, ability, resource \\ nil),
+      do: Laravex.Auth.Gate.denies?(user, ability, resource)
+
+    def authorize(%__MODULE__{user: user}, ability, resource \\ nil),
+      do: Laravex.Auth.Gate.authorize(user, ability, resource)
+
+    def inspect(%__MODULE__{user: user}, ability, resource \\ nil),
+      do: Laravex.Auth.Gate.inspect(user, ability, resource)
+
+    def any?(%__MODULE__{user: user}, abilities, resource \\ nil),
+      do: Laravex.Auth.Gate.any?(user, abilities, resource)
+
+    def none?(%__MODULE__{user: user}, abilities, resource \\ nil),
+      do: Laravex.Auth.Gate.none?(user, abilities, resource)
+  end
+
   @table :laravex_gates
   @before_key :laravex_gate_before
   @after_key :laravex_gate_after
@@ -271,6 +294,21 @@ defmodule Laravex.Auth.Gate do
       raise Laravex.Http.HttpException, status: 403, message: "This action is unauthorized."
     end
   end
+
+  @doc "Inspect an authorization decision (Laravel `Gate::inspect`)."
+  def inspect(user, ability, resource \\ nil) do
+    allowed? = allows?(user, ability, resource)
+
+    %{
+      allowed?: allowed?,
+      message: if(allowed?, do: nil, else: "This action is unauthorized."),
+      code: if(allowed?, do: 200, else: 403),
+      ability: to_string(ability)
+    }
+  end
+
+  @doc "Gate scoped to a user (Laravel `Gate::forUser`)."
+  def for_user(user), do: %UserGate{user: user}
 
   defp check_ability(user, ability, resource) do
     case :ets.lookup(@table, to_string(ability)) do

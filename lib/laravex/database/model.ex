@@ -231,8 +231,14 @@ defmodule Laravex.Database.Model do
         |> Laravex.Database.Query.update(attrs)
 
         saved = find(id, with_trashed: true)
-        if saved, do: Laravex.Database.Model.touch_parents(saved), else: saved
-        saved
+
+        if saved do
+          saved
+          |> Laravex.Database.Model.sync_was_changed(changes)
+          |> Laravex.Database.Model.touch_parents()
+        else
+          saved
+        end
       end
 
       def delete(%__MODULE__{id: id} = model) do
@@ -369,8 +375,20 @@ defmodule Laravex.Database.Model do
         Laravex.Database.Model.is_dirty?(model, attr)
       end
 
+      def is_clean?(%__MODULE__{} = model, attr \\ nil) do
+        Laravex.Database.Model.is_clean?(model, attr)
+      end
+
       def get_changes(%__MODULE__{} = model) do
         Laravex.Database.Model.get_changes(model)
+      end
+
+      def get_original(%__MODULE__{} = model, attr \\ nil) do
+        Laravex.Database.Model.get_original(model, attr)
+      end
+
+      def was_changed(%__MODULE__{} = model, attr \\ nil) do
+        Laravex.Database.Model.was_changed?(model, attr)
       end
 
       def to_map(%__MODULE__{} = model) do
@@ -827,6 +845,11 @@ defmodule Laravex.Database.Model do
     model
   end
 
+  def sync_was_changed(model, changes) when is_map(changes) do
+    Process.put(was_changed_key(model), changes)
+    model
+  end
+
   def is_dirty?(model, nil) do
     map_size(get_changes(model)) > 0
   end
@@ -834,6 +857,8 @@ defmodule Laravex.Database.Model do
   def is_dirty?(model, attr) do
     Map.has_key?(get_changes(model), String.to_atom(to_string(attr)))
   end
+
+  def is_clean?(model, attr \\ nil), do: not is_dirty?(model, attr)
 
   def get_changes(model) do
     original = Process.get(original_key(model), %{})
@@ -847,6 +872,27 @@ defmodule Laravex.Database.Model do
         acc
       end
     end)
+  end
+
+  def get_original(model, attr \\ nil)
+
+  def get_original(model, nil) do
+    Process.get(original_key(model), %{})
+  end
+
+  def get_original(model, attr) do
+    key = String.to_atom(to_string(attr))
+    Map.get(get_original(model, nil), key)
+  end
+
+  def was_changed?(model, attr \\ nil)
+
+  def was_changed?(model, nil) do
+    map_size(Process.get(was_changed_key(model), %{})) > 0
+  end
+
+  def was_changed?(model, attr) do
+    Map.has_key?(Process.get(was_changed_key(model), %{}), String.to_atom(to_string(attr)))
   end
 
   def get_attribute(model, key) do
@@ -1030,6 +1076,8 @@ defmodule Laravex.Database.Model do
   end
 
   defp original_key(model), do: {:laravex_original, model.__struct__, Map.get(model, :id)}
+
+  defp was_changed_key(model), do: {:laravex_was_changed, model.__struct__, Map.get(model, :id)}
 
   def stringify(map) do
     Map.new(map, fn {k, v} -> {to_string(k), v} end)

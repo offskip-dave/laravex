@@ -498,6 +498,21 @@ defmodule Laravex.View do
         if truthy?(eval_form_compare(expr, assigns)), do: "checked", else: ""
       end)
     end)
+    |> then(fn html ->
+      Regex.replace(~r/@disabled\(\s*(.+?)\s*\)/, html, fn _, expr ->
+        if truthy?(eval_form_compare(expr, assigns)), do: "disabled", else: ""
+      end)
+    end)
+    |> then(fn html ->
+      Regex.replace(~r/@readonly\(\s*(.+?)\s*\)/, html, fn _, expr ->
+        if truthy?(eval_form_compare(expr, assigns)), do: "readonly", else: ""
+      end)
+    end)
+    |> then(fn html ->
+      Regex.replace(~r/@required\(\s*(.+?)\s*\)/, html, fn _, expr ->
+        if truthy?(eval_form_compare(expr, assigns)), do: "required", else: ""
+      end)
+    end)
   end
 
   # Supports `old('field') == 'value'` and bare assign truthiness.

@@ -202,10 +202,17 @@ defmodule Laravex.Support.Helpers do
       request ->
         to =
           Laravex.Http.Request.header(request, "referer") ||
-            Map.get(request.session || %{}, "_previous.url") ||
+            Laravex.Session.Store.previous_url(request) ||
             fallback
 
         redirect(to)
+    end
+  end
+
+  def previous_url(fallback \\ nil) do
+    case Process.get(:laravex_request) do
+      nil -> fallback
+      request -> Laravex.Session.Store.previous_url(request, fallback)
     end
   end
 

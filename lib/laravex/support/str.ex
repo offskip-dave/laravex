@@ -22,6 +22,9 @@ defmodule Laravex.Support.Str do
   def contains?(haystack, needles) when is_list(needles),
     do: Enum.any?(needles, &contains?(haystack, &1))
 
+  def contains_all?(haystack, needles) when is_list(needles),
+    do: Enum.all?(needles, &contains?(haystack, &1))
+
   def starts_with?(s, prefix), do: String.starts_with?(to_string(s), prefix)
   def ends_with?(s, suffix), do: String.ends_with?(to_string(s), suffix)
 
@@ -197,6 +200,9 @@ defmodule Laravex.Support.Str do
 
   def is_mac_address?(_), do: false
 
+  def is_ascii?(s) when is_binary(s), do: Regex.match?(~r/\A[\x00-\x7F]*\z/, s)
+  def is_ascii?(_), do: false
+
   @doc "Generate a random password (Laravel `Str::password`)."
   def password(len \\ 32, opts \\ []) when is_integer(len) and len > 0 do
     letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -264,6 +270,33 @@ defmodule Laravex.Support.Str do
 
   def replace(subject, search, replace, _opts \\ []) do
     String.replace(to_string(subject), to_string(search), to_string(replace))
+  end
+
+  def replace_first(subject, search, replace) do
+    String.replace(to_string(subject), to_string(search), to_string(replace), global: false)
+  end
+
+  def replace_last(subject, search, replace) do
+    subject = to_string(subject)
+    search = to_string(search)
+    replace = to_string(replace)
+
+    case :binary.matches(subject, search) do
+      [] ->
+        subject
+
+      matches ->
+        {pos, len} = List.last(matches)
+        before = binary_part(subject, 0, pos)
+        after_part = binary_part(subject, pos + len, byte_size(subject) - pos - len)
+        before <> replace <> after_part
+    end
+  end
+
+  def remove(subject, search) when is_binary(search), do: replace(subject, search, "")
+
+  def remove(subject, searches) when is_list(searches) do
+    Enum.reduce(searches, to_string(subject), fn s, acc -> replace(acc, s, "") end)
   end
 
   def mask(s, character \\ "*", index \\ 0, length \\ nil) do
