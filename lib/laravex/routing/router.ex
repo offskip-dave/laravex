@@ -39,30 +39,51 @@ defmodule Laravex.Routing.Router do
 
   def resource(name, controller, opts \\ []) do
     only = Keyword.get(opts, :only, [:index, :create, :store, :show, :edit, :update, :destroy])
+    except = Keyword.get(opts, :except, [])
+    only = Enum.reject(only, &(&1 in except))
     base = "/" <> String.trim(name, "/")
+    mw = Keyword.take(opts, [:middleware])
 
     if :index in only,
-      do: get(base, &controller_call(controller, :index, &1), name: "#{name}.index")
+      do: get(base, &controller_call(controller, :index, &1), [name: "#{name}.index"] ++ mw)
 
     if :create in only,
-      do: get(base <> "/create", &controller_call(controller, :create, &1), name: "#{name}.create")
+      do:
+        get(base <> "/create", &controller_call(controller, :create, &1), [
+          name: "#{name}.create"
+        ] ++ mw)
 
     if :store in only,
-      do: post(base, &controller_call(controller, :store, &1), name: "#{name}.store")
+      do: post(base, &controller_call(controller, :store, &1), [name: "#{name}.store"] ++ mw)
 
     if :show in only,
-      do: get(base <> "/{id}", &controller_call(controller, :show, &1), name: "#{name}.show")
+      do: get(base <> "/{id}", &controller_call(controller, :show, &1), [name: "#{name}.show"] ++ mw)
 
     if :edit in only,
-      do: get(base <> "/{id}/edit", &controller_call(controller, :edit, &1), name: "#{name}.edit")
+      do:
+        get(base <> "/{id}/edit", &controller_call(controller, :edit, &1), [
+          name: "#{name}.edit"
+        ] ++ mw)
 
     if :update in only,
-      do: put(base <> "/{id}", &controller_call(controller, :update, &1), name: "#{name}.update")
+      do:
+        put(base <> "/{id}", &controller_call(controller, :update, &1), [name: "#{name}.update"] ++ mw)
 
     if :destroy in only,
-      do: delete(base <> "/{id}", &controller_call(controller, :destroy, &1), name: "#{name}.destroy")
+      do:
+        delete(base <> "/{id}", &controller_call(controller, :destroy, &1), [
+          name: "#{name}.destroy"
+        ] ++ mw)
 
     :ok
+  end
+
+  def api_resource(name, controller, opts \\ []) do
+    resource(
+      name,
+      controller,
+      Keyword.merge([only: [:index, :store, :show, :update, :destroy], middleware: ["api"]], opts)
+    )
   end
 
   @doc """

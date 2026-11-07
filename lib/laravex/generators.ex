@@ -105,6 +105,41 @@ defmodule Laravex.Generators do
     IO.puts("Seeder created: #{path}")
   end
 
+  def make_policy(name) do
+    model = String.replace_suffix(name, "Policy", "")
+
+    stub("Policies", name, """
+    defmodule App.Policies.#{name} do
+      @moduledoc "Authorization policy for #{model}."
+
+      def view?(user, _model), do: not is_nil(user)
+      def create?(user), do: not is_nil(user)
+      def update?(user, _model), do: not is_nil(user)
+      def delete?(user, _model), do: not is_nil(user)
+    end
+    """)
+  end
+
+  def make_middleware(name) do
+    stub("Http/Middleware", name, """
+    defmodule App.Http.Middleware.#{name} do
+      def handle(request, _opts), do: {:ok, request}
+    end
+    """)
+  end
+
+  def make_resource(name) do
+    stub("Http/Resources", name, """
+    defmodule App.Http.Resources.#{name} do
+      use Laravex.Http.Resource
+
+      def to_map(model) do
+        %{id: Map.get(model, :id)}
+      end
+    end
+    """)
+  end
+
   def make_command(name) do
     cmd = Macro.underscore(name)
     File.mkdir_p!(Path.join(Laravex.Foundation.Application.base_path(), "app/Console"))

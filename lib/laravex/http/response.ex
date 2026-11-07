@@ -17,6 +17,41 @@ defmodule Laravex.Http.Response do
     ])
   end
 
+  @doc """
+  Laravel LengthAwarePaginator-shaped JSON envelope.
+  `mapper` transforms each item in `page.data`.
+  """
+  def json_paginated(page, mapper \\ & &1, status \\ 200) when is_map(page) do
+    data = Map.get(page, :data) || Map.get(page, "data") || []
+    total = Map.get(page, :total) || Map.get(page, "total") || 0
+    per_page = Map.get(page, :per_page) || Map.get(page, "per_page") || 15
+    current = Map.get(page, :current_page) || Map.get(page, "current_page") || 1
+    last = Map.get(page, :last_page) || Map.get(page, "last_page") || 1
+    path = Map.get(page, :path) || Map.get(page, "path") || "/"
+
+    json(
+      %{
+        data: Enum.map(List.wrap(data), mapper),
+        links: %{
+          first: "#{path}?page=1",
+          last: "#{path}?page=#{last}",
+          prev: if(current > 1, do: "#{path}?page=#{current - 1}", else: nil),
+          next: if(current < last, do: "#{path}?page=#{current + 1}", else: nil)
+        },
+        meta: %{
+          current_page: current,
+          from: if(total == 0, do: nil, else: (current - 1) * per_page + 1),
+          last_page: last,
+          path: path,
+          per_page: per_page,
+          to: min(current * per_page, total),
+          total: total
+        }
+      },
+      status
+    )
+  end
+
   def redirect(to, status \\ 302) do
     new(status, "", [{"location", to}])
   end
@@ -68,6 +103,7 @@ defmodule Laravex.Http.Response do
   defp reason_phrase(404), do: "Not Found"
   defp reason_phrase(419), do: "Page Expired"
   defp reason_phrase(422), do: "Unprocessable Entity"
+  defp reason_phrase(429), do: "Too Many Requests"
   defp reason_phrase(500), do: "Internal Server Error"
   defp reason_phrase(_), do: "OK"
 end

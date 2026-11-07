@@ -33,6 +33,42 @@ defmodule Laravex.Filesystem.Storage do
     :ok
   end
 
+  @doc "Store an uploaded file; returns the relative path on the disk."
+  def store(%Laravex.Http.UploadedFile{} = file, directory \\ "", disk_name \\ "public") do
+    ext =
+      case Laravex.Http.UploadedFile.extension(file) do
+        "" -> ""
+        e -> "." <> e
+      end
+
+    name = Laravex.Support.Helpers.str_random(40) <> ext
+    relative = Path.join([directory, name]) |> String.trim_leading("/")
+    put(relative, file.contents || "", disk_name)
+    relative
+  end
+
+  def put_file(directory, %Laravex.Http.UploadedFile{} = file, disk_name \\ "public") do
+    store(file, directory, disk_name)
+  end
+
+  def url(path, disk_name \\ "public") do
+    d = disk(disk_name)
+    base = Map.get(d.cfg, "url") || Map.get(d.cfg, :url)
+
+    cond do
+      is_binary(base) and base != "" ->
+        String.trim_trailing(base, "/") <> "/" <> String.trim_leading(path, "/")
+
+      true ->
+        "/storage/" <> String.trim_leading(path, "/")
+    end
+  end
+
+  def path(path, disk_name \\ nil) do
+    d = disk(disk_name)
+    Path.join(d.root, path)
+  end
+
   def link do
     links = Laravex.Config.Repository.get("filesystems.links", %{})
 

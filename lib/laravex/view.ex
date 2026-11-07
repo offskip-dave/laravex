@@ -24,6 +24,7 @@ defmodule Laravex.View do
     |> replace_vite()
     |> replace_csrf(assigns)
     |> replace_push()
+    |> replace_auth_directives(assigns)
     |> replace_foreach(assigns)
     |> replace_error(assigns)
     |> replace_directives(assigns)
@@ -202,6 +203,40 @@ defmodule Laravex.View do
         item_assigns = Map.put(assigns, item_key, item)
         body |> replace_echoes(item_assigns) |> replace_directives(item_assigns)
       end)
+    end)
+  end
+
+  defp replace_auth_directives(contents, assigns) do
+    request = Process.get(:laravex_request)
+    user = if request, do: Laravex.Auth.Guard.user(request), else: Map.get(assigns, "user")
+    authenticated? = not is_nil(user)
+
+    contents
+    |> then(fn html ->
+      Regex.replace(~r/@auth(.*?)@endauth/s, html, fn _, body ->
+        if authenticated?, do: body, else: ""
+      end)
+    end)
+    |> then(fn html ->
+      Regex.replace(~r/@guest(.*?)@endguest/s, html, fn _, body ->
+        if authenticated?, do: "", else: body
+      end)
+    end)
+    |> then(fn html ->
+      Regex.replace(
+        ~r/@can\(['"]([^'"]+)['"](?:,\s*\$?(\w+))?\)(.*?)@endcan/s,
+        html,
+        fn _, ability, resource_key, body ->
+          resource =
+            if resource_key in [nil, ""] do
+              nil
+            else
+              get_in_assign(assigns, resource_key)
+            end
+
+          if user && Laravex.Auth.Gate.allows?(user, ability, resource), do: body, else: ""
+        end
+      )
     end)
   end
 

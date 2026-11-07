@@ -32,6 +32,7 @@ defmodule Laravex.Console.Kernel do
     "make:provider" => {&__MODULE__.cmd_make_provider/1, "Create a provider"},
     "make:command" => {&__MODULE__.cmd_make_command/1, "Create a command"},
     "make:middleware" => {&__MODULE__.cmd_make_middleware/1, "Create middleware"},
+    "make:resource" => {&__MODULE__.cmd_make_resource/1, "Create an API resource"},
     "make:factory" => {&__MODULE__.cmd_make_factory/1, "Create a factory"},
     "make:seeder" => {&__MODULE__.cmd_make_seeder/1, "Create a seeder"},
     "install:api" => {&__MODULE__.cmd_install_api/1, "Install API routes and tokens"},
@@ -159,7 +160,7 @@ defmodule Laravex.Console.Kernel do
   def cmd_make_mail(_), do: usage("make:mail", "Name")
   def cmd_make_notification([name | _]), do: Laravex.Generators.stub("Notifications", name, notification_stub(name))
   def cmd_make_notification(_), do: usage("make:notification", "Name")
-  def cmd_make_policy([name | _]), do: Laravex.Generators.stub("Policies", name, policy_stub(name))
+  def cmd_make_policy([name | _]), do: Laravex.Generators.make_policy(name)
   def cmd_make_policy(_), do: usage("make:policy", "Name")
   def cmd_make_request([name | _]), do: Laravex.Generators.stub("Http/Requests", name, request_stub(name))
   def cmd_make_request(_), do: usage("make:request", "Name")
@@ -169,8 +170,10 @@ defmodule Laravex.Console.Kernel do
   def cmd_make_provider(_), do: usage("make:provider", "Name")
   def cmd_make_command([name | _]), do: Laravex.Generators.make_command(name)
   def cmd_make_command(_), do: usage("make:command", "Name")
-  def cmd_make_middleware([name | _]), do: Laravex.Generators.stub("Http/Middleware", name, middleware_stub(name))
+  def cmd_make_middleware([name | _]), do: Laravex.Generators.make_middleware(name)
   def cmd_make_middleware(_), do: usage("make:middleware", "Name")
+  def cmd_make_resource([name | _]), do: Laravex.Generators.make_resource(name)
+  def cmd_make_resource(_), do: usage("make:resource", "Name")
   def cmd_make_factory([name | _]), do: Laravex.Generators.make_factory(name)
   def cmd_make_factory(_), do: usage("make:factory", "Name")
   def cmd_make_seeder([name | _]), do: Laravex.Generators.make_seeder(name)
@@ -249,12 +252,6 @@ defmodule Laravex.Console.Kernel do
   end
   """
 
-  defp policy_stub(name), do: """
-  defmodule App.Policies.#{name} do
-    def view?(_user, _model), do: true
-  end
-  """
-
   defp request_stub(name), do: """
   defmodule App.Http.Requests.#{name} do
     use Laravex.Http.FormRequest
@@ -276,9 +273,4 @@ defmodule Laravex.Console.Kernel do
   end
   """
 
-  defp middleware_stub(name), do: """
-  defmodule App.Http.Middleware.#{name} do
-    def handle(request, _opts), do: {:ok, request}
-  end
-  """
 end

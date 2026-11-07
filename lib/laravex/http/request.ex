@@ -7,6 +7,7 @@ defmodule Laravex.Http.Request do
             headers: %{},
             body: "",
             params: %{},
+            files: %{},
             cookies: %{},
             session: %{},
             session_id: nil,
@@ -20,6 +21,7 @@ defmodule Laravex.Http.Request do
     {path, query} = split_path(path)
     headers = normalize_headers(headers)
     cookies = parse_cookies(Map.get(headers, "cookie", ""))
+    {params, files} = parse_body(headers, body)
 
     %__MODULE__{
       method: String.upcase(to_string(method)),
@@ -27,7 +29,8 @@ defmodule Laravex.Http.Request do
       query: query,
       headers: headers,
       body: body,
-      params: Map.merge(query, parse_body(headers, body)),
+      params: Map.merge(query, params),
+      files: files,
       cookies: cookies,
       expects_json: headers_expect_json?(headers)
     }
@@ -35,6 +38,10 @@ defmodule Laravex.Http.Request do
 
   def input(%__MODULE__{params: params}, key, default \\ nil) do
     Map.get(params, key) || Map.get(params, to_string(key), default)
+  end
+
+  def file(%__MODULE__{files: files}, key) do
+    Map.get(files, to_string(key)) || Map.get(files, key)
   end
 
   def all(%__MODULE__{params: params}), do: params
@@ -93,18 +100,101 @@ defmodule Laravex.Http.Request do
     ct = Map.get(headers, "content-type", "")
 
     cond do
+      String.contains?(ct, "multipart/form-data") ->
+        parse_multipart(ct, body)
+
       String.contains?(ct, "application/json") ->
         case Laravex.Support.JSON.decode(body) do
-          {:ok, map} when is_map(map) -> stringify_keys(map)
-          _ -> %{}
+          {:ok, map} when is_map(map) -> {stringify_keys(map), %{}}
+          _ -> {%{}, %{}}
         end
 
       String.contains?(ct, "application/x-www-form-urlencoded") ->
-        parse_query(body)
+        {parse_query(body), %{}}
 
       true ->
-        if body != "" and String.contains?(body, "="), do: parse_query(body), else: %{}
+        if body != "" and String.contains?(body, "="),
+          do: {parse_query(body), %{}},
+          else: {%{}, %{}}
     end
+  end
+
+  defp parse_multipart(content_type, body) do
+    case Regex.run(~r/boundary=(?:"([^"]+)"|([^\s;]+))/i, content_type) do
+      [_, b1, b2] ->
+        boundary = if b1 != "", do: b1, else: b2
+        parts = String.split(body, "--" <> boundary)
+
+        Enum.reduce(parts, {%{}, %{}}, fn part, {params, files} ->
+          part = String.trim(part)
+          if part in ["", "--", "-"] do
+            {params, files}
+          else
+            case String.split(part, "\r\n\r\n", parts: 2) do
+              [raw_headers, raw_body] ->
+                headers = parse_part_headers(raw_headers)
+                value = String.trim_trailing(raw_body, "\r\n")
+                name = Map.get(headers, "name")
+
+                cond do
+                  is_nil(name) ->
+                    {params, files}
+
+                  Map.has_key?(headers, "filename") ->
+                    file =
+                      Laravex.Http.UploadedFile.new(%{
+                        filename: headers["filename"],
+                        content_type: headers["content-type"] || "application/octet-stream",
+                        contents: value
+                      })
+
+                    {params, Map.put(files, name, file)}
+
+                  true ->
+                    {Map.put(params, name, value), files}
+                end
+
+              _ ->
+                {params, files}
+            end
+          end
+        end)
+
+      _ ->
+        {%{}, %{}}
+    end
+  end
+
+  defp parse_part_headers(raw) do
+    raw
+    |> String.split("\r\n")
+    |> Enum.reduce(%{}, fn line, acc ->
+      cond do
+        String.match?(line, ~r/^content-disposition:/i) ->
+          name =
+            case Regex.run(~r/name="([^"]*)"/, line) do
+              [_, n] -> n
+              _ -> nil
+            end
+
+          filename =
+            case Regex.run(~r/filename="([^"]*)"/, line) do
+              [_, f] -> f
+              _ -> nil
+            end
+
+          acc
+          |> then(fn a -> if name, do: Map.put(a, "name", name), else: a end)
+          |> then(fn a -> if filename, do: Map.put(a, "filename", filename), else: a end)
+
+        String.match?(line, ~r/^content-type:/i) ->
+          ct = line |> String.split(":", parts: 2) |> List.last() |> String.trim()
+          Map.put(acc, "content-type", ct)
+
+        true ->
+          acc
+      end
+    end)
   end
 
   defp parse_cookies(""), do: %{}

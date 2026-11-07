@@ -65,12 +65,18 @@ defmodule Laravex.Auth.Guard do
   end
 
   def authorize(user, ability, resource \\ nil) do
+    Laravex.Auth.Gate.authorize(user, ability, resource)
+  end
+
+  def allows?(user, ability, resource \\ nil) do
     Laravex.Auth.Gate.allows?(user, ability, resource)
   end
+
+  def denies?(user, ability, resource \\ nil), do: not allows?(user, ability, resource)
 end
 
 defmodule Laravex.Auth.Gate do
-  @moduledoc "Simple policy/gate registry."
+  @moduledoc "Gate + policy registry (Laravel Gate / Policy conventions)."
 
   @table :laravex_gates
 
@@ -96,11 +102,31 @@ defmodule Laravex.Auth.Gate do
     ensure()
 
     case :ets.lookup(@table, to_string(ability)) do
-      [{_, fun}] when is_function(fun, 2) -> fun.(user, resource)
-      [{_, fun}] when is_function(fun, 1) -> fun.(user)
-      [] -> false
+      [{_, fun}] when is_function(fun, 2) ->
+        truthy?(fun.(user, resource))
+
+      [{_, fun}] when is_function(fun, 1) ->
+        truthy?(fun.(user))
+
+      [] ->
+        Laravex.Auth.Policy.allows?(user, ability, resource)
     end
   end
+
+  def denies?(user, ability, resource \\ nil), do: not allows?(user, ability, resource)
+
+  def authorize(user, ability, resource \\ nil) do
+    if allows?(user, ability, resource) do
+      :ok
+    else
+      raise Laravex.Http.HttpException, status: 403, message: "This action is unauthorized."
+    end
+  end
+
+  defp truthy?(true), do: true
+  defp truthy?(false), do: false
+  defp truthy?(nil), do: false
+  defp truthy?(_), do: true
 end
 
 defmodule Laravex.Auth.Token do

@@ -40,8 +40,55 @@ defmodule Laravex.Http.Middleware do
 
   def run_web(request, %__MODULE__{} = middleware), do: run(request, web_group(middleware))
 
+  def resolve_alias(name) when is_atom(name), do: {name, []}
+
+  def resolve_alias(name) when is_binary(name) do
+    {alias_name, arg} =
+      case String.split(name, ":", parts: 2) do
+        [a, rest] -> {a, rest}
+        [a] -> {a, nil}
+      end
+
+    case alias_name do
+      "auth" ->
+        {Laravex.Http.Middleware.Authenticate, json: arg == "api"}
+
+      "guest" ->
+        {Laravex.Http.Middleware.RedirectIfAuthenticated, []}
+
+      "signed" ->
+        {Laravex.Http.Middleware.ValidateSignature, []}
+
+      "can" ->
+        {ability, resource} =
+          case String.split(arg || "", ",", parts: 2) do
+            [ab, res] -> {String.trim(ab), String.trim(res)}
+            [ab] -> {String.trim(ab), nil}
+          end
+
+        {Laravex.Http.Middleware.Authorize, ability: ability, resource: resource}
+
+      "throttle" ->
+        {max, decay} =
+          case String.split(arg || "60,1", ",", parts: 2) do
+            [m, d] -> {String.to_integer(String.trim(m)), String.to_integer(String.trim(d))}
+            [m] -> {String.to_integer(String.trim(m)), 1}
+          end
+
+        {Laravex.Http.Middleware.ThrottleRequests, max: max, decay: decay}
+
+      other ->
+        {Module.concat([other]), []}
+    end
+  end
+
+  defp apply_plug({plug, opts}, request) when is_atom(plug), do: plug.handle(request, List.wrap(opts) |> normalize_opts())
   defp apply_plug(plug, request) when is_atom(plug), do: plug.handle(request, [])
   defp apply_plug(plug, request) when is_function(plug, 1), do: plug.(request)
+
+  defp normalize_opts(opts) when is_list(opts) do
+    if Keyword.keyword?(opts), do: opts, else: []
+  end
 end
 
 defmodule Laravex.Http.Middleware.EncryptCookies do

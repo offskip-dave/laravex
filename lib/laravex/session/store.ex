@@ -102,7 +102,9 @@ end
 
 defmodule Laravex.Http.Middleware.StartSession do
   def handle(request, _opts) do
-    {:ok, Laravex.Session.Store.start(request)}
+    request = Laravex.Session.Store.start(request)
+    user = Laravex.Auth.Guard.user(request)
+    {:ok, %{request | user: user}}
   end
 end
 

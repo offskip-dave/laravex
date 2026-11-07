@@ -1,6 +1,7 @@
 defmodule Laravex.Database.Model do
   @moduledoc """
-  Eloquent-shaped ActiveRecord base with relations, pagination, and soft deletes.
+  Eloquent-shaped ActiveRecord base with relations, pagination, soft deletes,
+  scopes, accessors/mutators, and dirty tracking.
   Use with `use Laravex.Database.Model, table: "users"` or `soft_deletes: true`.
   """
 
@@ -15,7 +16,9 @@ defmodule Laravex.Database.Model do
       def new(attrs \\ %{}) when is_map(attrs) do
         attrs = Laravex.Database.Model.stringify(attrs)
         casted = Laravex.Database.Model.cast_attrs(__MODULE__, attrs)
-        struct(__MODULE__, Laravex.Database.Model.atomize(casted))
+        mutated = Laravex.Database.Model.apply_mutators(__MODULE__, casted)
+        model = struct(__MODULE__, Laravex.Database.Model.atomize(mutated))
+        Laravex.Database.Model.sync_original(model)
       end
 
       def query(opts \\ []) do
@@ -35,6 +38,10 @@ defmodule Laravex.Database.Model do
         else
           q
         end
+      end
+
+      def scope(q, name, args \\ []) when is_atom(name) do
+        apply(__MODULE__, :"scope_#{name}", [q | List.wrap(args)])
       end
 
       def all(opts \\ []) do
@@ -88,14 +95,16 @@ defmodule Laravex.Database.Model do
 
       def save(%__MODULE__{id: id} = model) do
         now = DateTime.utc_now() |> DateTime.to_iso8601()
+        changes = Laravex.Database.Model.get_changes(model)
 
         attrs =
-          model
-          |> Map.from_struct()
-          |> Map.drop([:id, :__relations__])
-          |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-          |> Map.new(fn {k, v} -> {to_string(k), v} end)
-          |> Map.put("updated_at", now)
+          if map_size(changes) == 0 do
+            %{"updated_at" => now}
+          else
+            changes
+            |> Map.new(fn {k, v} -> {to_string(k), v} end)
+            |> Map.put("updated_at", now)
+          end
 
         Laravex.Database.Query.table(table_name())
         |> Laravex.Database.Query.where("id", id)
@@ -165,6 +174,22 @@ defmodule Laravex.Database.Model do
 
       def from_row(row) when is_map(row) do
         new(row)
+      end
+
+      def get_attribute(%__MODULE__{} = model, key) do
+        Laravex.Database.Model.get_attribute(model, key)
+      end
+
+      def is_dirty?(%__MODULE__{} = model, attr \\ nil) do
+        Laravex.Database.Model.is_dirty?(model, attr)
+      end
+
+      def get_changes(%__MODULE__{} = model) do
+        Laravex.Database.Model.get_changes(model)
+      end
+
+      def to_map(%__MODULE__{} = model) do
+        Laravex.Database.Model.to_map(model)
       end
 
       defoverridable new: 0, new: 1, find_by_email: 1
@@ -238,6 +263,77 @@ defmodule Laravex.Database.Model do
     key = {model.__struct__, Map.get(model, :id), to_string(name)}
     Process.get({:laravex_relation, key})
   end
+
+  def sync_original(model) do
+    key = original_key(model)
+    Process.put(key, Map.from_struct(model) |> Map.drop([:__struct__]))
+    model
+  end
+
+  def is_dirty?(model, nil) do
+    map_size(get_changes(model)) > 0
+  end
+
+  def is_dirty?(model, attr) do
+    Map.has_key?(get_changes(model), String.to_atom(to_string(attr)))
+  end
+
+  def get_changes(model) do
+    original = Process.get(original_key(model), %{})
+    current = Map.from_struct(model) |> Map.drop([:__struct__])
+
+    current
+    |> Enum.reduce(%{}, fn {k, v}, acc ->
+      if Map.get(original, k) != v and k not in [:__relations__] do
+        Map.put(acc, k, v)
+      else
+        acc
+      end
+    end)
+  end
+
+  def get_attribute(model, key) do
+    key_atom = String.to_atom(to_string(key))
+    value = Map.get(model, key_atom)
+    mod = model.__struct__
+    accessor = :"get_#{key_atom}_attribute"
+
+    if function_exported?(mod, accessor, 1) do
+      apply(mod, accessor, [value])
+    else
+      value
+    end
+  end
+
+  def apply_mutators(mod, attrs) when is_map(attrs) do
+    Map.new(attrs, fn {k, v} ->
+      mutator = :"set_#{k}_attribute"
+
+      if function_exported?(mod, mutator, 1) do
+        {k, apply(mod, mutator, [v])}
+      else
+        {k, v}
+      end
+    end)
+  end
+
+  def to_map(model) do
+    mod = model.__struct__
+    hidden = if function_exported?(mod, :hidden, 0), do: Enum.map(mod.hidden(), &to_string/1), else: []
+    appends = if function_exported?(mod, :appends, 0), do: mod.appends(), else: []
+
+    base =
+      model
+      |> Map.from_struct()
+      |> Enum.reject(fn {k, _} -> to_string(k) in hidden or k == :__relations__ end)
+      |> Map.new(fn {k, v} -> {to_string(k), get_attribute(model, k) || v} end)
+
+    Enum.reduce(List.wrap(appends), base, fn key, acc ->
+      Map.put(acc, to_string(key), get_attribute(model, key))
+    end)
+  end
+
+  defp original_key(model), do: {:laravex_original, model.__struct__, Map.get(model, :id)}
 
   def stringify(map) do
     Map.new(map, fn {k, v} -> {to_string(k), v} end)

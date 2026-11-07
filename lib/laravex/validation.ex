@@ -39,9 +39,11 @@ defmodule Laravex.Validation do
   (picked up by ShareErrors / `@error` on the next render).
   """
   def validate_request(request, rules) do
-    case validate(request.params, rules) do
-      {:ok, data} ->
-        {:ok, data, request}
+    data = Map.merge(request.params, request.files || %{})
+
+    case validate(data, rules) do
+      {:ok, validated} ->
+        {:ok, validated, request}
 
       {:error, errors} ->
         request =
@@ -111,6 +113,27 @@ defmodule Laravex.Validation do
 
         "nullable" ->
           []
+
+        "file" ->
+          case value do
+            %Laravex.Http.UploadedFile{} -> []
+            nil -> []
+            _ -> ["The #{field} field must be a file."]
+          end
+
+        "image" ->
+          case value do
+            %Laravex.Http.UploadedFile{} = f ->
+              if Laravex.Http.UploadedFile.image?(f),
+                do: [],
+                else: ["The #{field} field must be an image."]
+
+            nil ->
+              []
+
+            _ ->
+              ["The #{field} field must be an image."]
+          end
 
         _ ->
           []

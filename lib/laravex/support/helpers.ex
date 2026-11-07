@@ -33,11 +33,23 @@ defmodule Laravex.Support.Helpers do
     Laravex.Routing.Router.url(name, params)
   end
 
+  def signed_route(name, params \\ %{}, opts \\ []) do
+    Laravex.Http.UrlSigner.sign(route(name, params), opts)
+  end
+
+  def temporary_signed_route(name, seconds, params \\ %{}) do
+    Laravex.Http.UrlSigner.temporary(route(name, params), seconds)
+  end
+
   def auth, do: Laravex.Auth.Guard
 
   def cache, do: Laravex.Cache.Manager
 
   def session, do: Laravex.Session.Store
+
+  def storage, do: Laravex.Filesystem.Storage
+
+  def gate, do: Laravex.Auth.Gate
 
   def ___(key, replace \\ %{}, locale \\ nil) do
     Laravex.Translation.get(key, replace, locale)

@@ -32,13 +32,13 @@ mix test
 
 | Layer | Capabilities |
 |---|---|
-| Foundation | Container, HTTP/router (params, groups, resources), middleware (session/CSRF/bindings), exceptions, logging |
-| Database | SQLite via `sqlite3` CLI, Schema/Blueprint, dynamic migrations, query builder, Eloquent (relations, pagination, soft deletes) |
-| Auth web loop | Session, CSRF, session guard, validation / form requests, hashing, Crypt |
-| DX | `make:*` (real table names), migrate/seed, route:list, serve, tinker REPL, `AGENTS.md` |
-| Services | Cache, database queue worker, mail (log/array), filesystem disks, `storage:link` |
-| HTTP | Static files from `public/`, OTP `:json` |
-| Views | Blade-like `{{ }}`, `@csrf`, `@vite`, `@if`, `@foreach`, `@error`, `@component`/`@slot`, `@push`/`@stack`, layouts |
+| Foundation | Container, HTTP/router (params, groups, resources/apiResource), middleware (session/CSRF/bindings/auth/guest/can/throttle/signed), exceptions, logging |
+| Database | SQLite via `sqlite3` CLI, Schema/Blueprint, dynamic migrations, query builder, Eloquent (relations, pagination, soft deletes, scopes, dirty tracking) |
+| Auth web loop | Session, CSRF, session guard, policies/gates, validation / form requests, hashing, Crypt, signed URLs |
+| DX | `make:*` (model/policy/resource/…), migrate/seed, route:list, serve, tinker REPL, `AGENTS.md` |
+| Services | Cache, database queue worker, mail (log/array), filesystem disks (`store`/`url`), `storage:link` |
+| HTTP | Static files, multipart uploads, JsonResource + paginated JSON, OTP `:json` |
+| Views | Blade-like `{{ }}`, `@csrf`, `@vite`, `@if`, `@foreach`, `@error`, `@auth`/`@guest`/`@can`, `@component`/`@slot`, `@push`/`@stack`, layouts |
 | Async | Events/listeners, notifications, schedule (cron/`hourly`/`daily`), broadcasting bus |
 | Ecosystem | `install:api` (tokens), `install:broadcasting`, `install:starter-kit`, observability recorder |
 

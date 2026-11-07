@@ -46,8 +46,9 @@ defmodule Laravex.Http.Kernel do
     |> Enum.flat_map(fn
       "web" -> Laravex.Http.Middleware.web_group(middleware)
       "api" -> Laravex.Http.Middleware.api_group(middleware)
-      other when is_atom(other) -> [other]
-      other when is_binary(other) -> [Module.concat([other])]
+      other when is_atom(other) -> [{other, []}]
+      other when is_binary(other) -> [Laravex.Http.Middleware.resolve_alias(other)]
+      {mod, plug_opts} when is_atom(mod) -> [{mod, plug_opts}]
       _ -> []
     end)
   end
