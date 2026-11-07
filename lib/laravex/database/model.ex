@@ -141,8 +141,8 @@ defmodule Laravex.Database.Model do
         end
       end
 
-      def paginate(per_page \\ 15, page \\ 1) do
-        Laravex.Database.Model.paginate(__MODULE__, per_page, page)
+      def paginate(per_page \\ 15, page \\ 1, opts \\ []) do
+        Laravex.Database.Model.paginate(__MODULE__, per_page, page, opts)
       end
 
       def has_many(name, related, foreign_key \\ nil) do
@@ -225,7 +225,7 @@ defmodule Laravex.Database.Model do
     end
   end
 
-  def paginate(mod, per_page, page) when page >= 1 do
+  def paginate(mod, per_page, page, opts \\ []) when page >= 1 do
     total = Laravex.Database.Query.count(mod.query())
     offset = (page - 1) * per_page
 
@@ -236,12 +236,22 @@ defmodule Laravex.Database.Model do
       |> Laravex.Database.Query.get()
       |> Enum.map(&mod.from_row/1)
 
+    path = Keyword.get(opts, :path, "/")
+
+    query =
+      opts
+      |> Keyword.get(:query, %{})
+      |> Map.new(fn {k, v} -> {to_string(k), v} end)
+      |> Map.delete("page")
+
     %{
       data: data,
       total: total,
       per_page: per_page,
       current_page: page,
-      last_page: max(1, ceil(total / max(per_page, 1)))
+      last_page: max(1, ceil(total / max(per_page, 1))),
+      path: path,
+      query: query
     }
   end
 

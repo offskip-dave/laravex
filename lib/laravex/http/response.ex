@@ -25,18 +25,18 @@ defmodule Laravex.Http.Response do
     data = Map.get(page, :data) || Map.get(page, "data") || []
     total = Map.get(page, :total) || Map.get(page, "total") || 0
     per_page = Map.get(page, :per_page) || Map.get(page, "per_page") || 15
-    current = Map.get(page, :current_page) || Map.get(page, "current_page") || 1
-    last = Map.get(page, :last_page) || Map.get(page, "last_page") || 1
-    path = Map.get(page, :path) || Map.get(page, "path") || "/"
+    current = Laravex.Http.Paginator.current_page(page)
+    last = Laravex.Http.Paginator.last_page(page)
+    path = Laravex.Http.Paginator.pager_path(page)
 
     json(
       %{
         data: Enum.map(List.wrap(data), mapper),
         links: %{
-          first: "#{path}?page=1",
-          last: "#{path}?page=#{last}",
-          prev: if(current > 1, do: "#{path}?page=#{current - 1}", else: nil),
-          next: if(current < last, do: "#{path}?page=#{current + 1}", else: nil)
+          first: Laravex.Http.Paginator.page_url(page, 1, path),
+          last: Laravex.Http.Paginator.page_url(page, last, path),
+          prev: if(current > 1, do: Laravex.Http.Paginator.page_url(page, current - 1, path), else: nil),
+          next: if(current < last, do: Laravex.Http.Paginator.page_url(page, current + 1, path), else: nil)
         },
         meta: %{
           current_page: current,

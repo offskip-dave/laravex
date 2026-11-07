@@ -68,7 +68,45 @@ defmodule Laravex.Http.Request do
   end
 
   def expects_json?(%__MODULE__{expects_json: true}), do: true
-  def expects_json?(%__MODULE__{}), do: false
+  def expects_json?(%__MODULE__{} = request), do: wants_json?(request)
+
+  @doc "Laravel `Request::wantsJson()` — Accept prefers JSON."
+  def wants_json?(%__MODULE__{} = request) do
+    accept = header(request, "accept") || ""
+
+    String.contains?(accept, "application/json") or
+      String.contains?(accept, "+json") or
+      request.expects_json == true
+  end
+
+  @doc "Laravel `Request::ajax()` — X-Requested-With: XMLHttpRequest."
+  def ajax?(%__MODULE__{} = request) do
+    header(request, "x-requested-with") == "XMLHttpRequest"
+  end
+
+  @doc "Whether Accept includes any of the given content types."
+  def accepts?(%__MODULE__{} = request, types) do
+    accept = String.downcase(header(request, "accept") || "")
+
+    Enum.any?(List.wrap(types), fn type ->
+      String.contains?(accept, String.downcase(to_string(type)))
+    end)
+  end
+
+  @doc "Absolute URL for the current request path + query."
+  def full_url(%__MODULE__{} = request) do
+    base = String.trim_trailing(to_string(Laravex.Config.Repository.get("app.url", "")), "/")
+    query =
+      if map_size(request.query || %{}) > 0 do
+        "?" <> URI.encode_query(Map.new(request.query, fn {k, v} -> {to_string(k), to_string(v)} end))
+      else
+        ""
+      end
+
+    base <> request.path <> query
+  end
+
+  def safe?(%__MODULE__{method: method}), do: method in ["GET", "HEAD", "OPTIONS"]
 
   @doc "Client IP after TrustProxies (falls back to X-Real-IP / 127.0.0.1)."
   def ip(%__MODULE__{} = request) do

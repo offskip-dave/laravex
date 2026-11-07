@@ -6,7 +6,7 @@ defmodule Laravex.Http.Kernel do
 
     case Laravex.Routing.Router.match(request) do
       :error ->
-        not_found()
+        not_found(request)
 
       {:ok, request, handler, opts} ->
         plugs = resolve_plugs(app.middleware, opts)
@@ -140,11 +140,16 @@ defmodule Laravex.Http.Kernel do
     Laravex.Http.Middleware.global(middleware) ++ group_plugs
   end
 
-  defp not_found do
-    Laravex.Http.Response.html(
-      "<!DOCTYPE html><html><body><h1>404</h1><p>Not Found</p></body></html>",
-      404
-    )
+  defp not_found(request) do
+    if Laravex.Http.Request.wants_json?(request) or Laravex.Http.Request.is?(request, "api/*") or
+         Laravex.Http.Request.ajax?(request) do
+      Laravex.Http.Response.json(%{message: "Not Found"}, 404)
+    else
+      Laravex.Http.Response.html(
+        "<!DOCTYPE html><html><body><h1>404</h1><p>Not Found</p></body></html>",
+        404
+      )
+    end
   end
 
   defp clear_request_process do
@@ -153,6 +158,7 @@ defmodule Laravex.Http.Kernel do
         :laravex_request,
         :laravex_remember_cookie,
         :laravex_cors_request,
+        :laravex_cache_headers,
         :laravex_client_ip,
         :laravex_client_secure,
         :laravex_client_host

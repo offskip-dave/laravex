@@ -51,8 +51,9 @@ Password resets use `Laravex.Auth.Password` + `password_reset_tokens` (wired by 
 - Config: `Laravex.Config.Repository.get("app.name")` — files under `config/*.exs` except Mix’s `config.exs` / `dev.exs` / `test.exs` / `prod.exs` / `runtime.exs`.
 - Models (Eloquex): prefer `use Laravex.Eloquex.Model, table: "…"`. Support `fillable`/`guarded`, `appends`, `touches`, `touch/1`. `Laravex.Database.Model` is a compatibility alias.
 - Health: plain `/up` plus JSON `/health` (DB ping).
-- Middleware: global stack (`TrustProxies`, `HandleCors`, `TrimStrings`, `ConvertEmptyStringsToNull`) then `web` (session/CSRF) or `api` (`throttle:api`, no CSRF). Customize via `with_middleware` in `bootstrap/app.ex` (`prepend_to_group` / `append_to_group` / `prepend_global`). Aliases: `auth`, `guest`, `can:ability[,param]`, `throttle:60,1` or `throttle:api`, `signed`.
+- Middleware: global stack (`TrustProxies`, `TrustHosts`, `HandleCors`, `TrimStrings`, `ConvertEmptyStringsToNull`) then `web` (session/CSRF) or `api` (`throttle:api`, no CSRF). Customize via `with_middleware` in `bootstrap/app.ex` (`prepend_to_group` / `append_to_group` / `prepend_global`). Aliases: `auth`, `guest`, `can:ability[,param]`, `throttle:60,1` or `throttle:api`, `signed`, `cache.headers:public;max_age=60;etag`.
 - CORS: `config/cors.exs` (loaded automatically). Artisan: `env`, `key:generate`, `about`, `down`/`up`.
+- Request helpers: `wants_json?/1`, `ajax?/1`, `accepts?/2`, `full_url/1`, `ip/1`, `secure?/1`. Filesystem disks: local driver only (non-local raises).
 - Policies live in `app/Policies/*Policy.ex` and resolve via `Laravex.Auth.Gate`.
 - Prefer extending `lib/laravex/*` for framework behavior; keep `app/` for application code.
 

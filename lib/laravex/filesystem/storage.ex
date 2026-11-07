@@ -5,8 +5,22 @@ defmodule Laravex.Filesystem.Storage do
     name = name || Laravex.Config.Repository.get("filesystems.default", "local")
     disks = Laravex.Config.Repository.get("filesystems.disks", %{})
     cfg = Map.get(disks, name) || Map.get(disks, to_string(name)) || %{}
+    ensure_local_driver!(name, cfg)
     root = Map.get(cfg, "root") || Map.get(cfg, :root) || storage_root(name)
     %{name: name, root: root, cfg: cfg}
+  end
+
+  defp ensure_local_driver!(name, cfg) do
+    driver = Map.get(cfg, "driver") || Map.get(cfg, :driver) || "local"
+
+    unless driver in ["local", :local] do
+      raise ArgumentError,
+            "Filesystem disk #{inspect(name)} uses unsupported driver #{inspect(driver)}. " <>
+              "Only the \"local\" driver is available in Laravex — set FILESYSTEM_DISK=local " <>
+              "(or install a cloud driver later)."
+    end
+
+    :ok
   end
 
   def put(path, contents, disk \\ nil) do

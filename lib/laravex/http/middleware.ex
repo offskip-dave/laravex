@@ -23,6 +23,7 @@ defmodule Laravex.Http.Middleware do
             },
             global: [
               Laravex.Http.Middleware.TrustProxies,
+              Laravex.Http.Middleware.TrustHosts,
               Laravex.Http.Middleware.HandleCors,
               Laravex.Http.Middleware.TrimStrings,
               Laravex.Http.Middleware.ConvertEmptyStringsToNull
@@ -84,6 +85,9 @@ defmodule Laravex.Http.Middleware do
 
       "signed" ->
         {Laravex.Http.Middleware.ValidateSignature, []}
+
+      "cache.headers" ->
+        {Laravex.Http.Middleware.SetCacheHeaders, Laravex.Http.Middleware.SetCacheHeaders.parse_arg(arg)}
 
       "can" ->
         {ability, resource} =
@@ -280,13 +284,14 @@ defmodule Laravex.Http.Middleware.SubstituteBindings do
   @moduledoc """
   Resolves route parameters that look like model bindings.
   Convention: `{user}` → App.Models.User.find(id) when that module exists.
+  Missing models raise `Laravex.Database.ModelNotFoundException` (404).
   """
 
   def handle(request, _opts) do
     bindings =
       Enum.reduce(request.route_params || %{}, %{}, fn {key, value}, acc ->
         case resolve_binding(key, value) do
-          nil -> acc
+          :skip -> acc
           model -> Map.put(acc, key, model)
         end
       end)
@@ -299,24 +304,38 @@ defmodule Laravex.Http.Middleware.SubstituteBindings do
     {:ok, %{request | params: params, route_params: Map.merge(request.route_params || %{}, bindings)}}
   end
 
+  defp resolve_binding(_key, value) when is_map(value), do: :skip
+
   defp resolve_binding(key, value) do
-    mod_name = "App.Models." <> Macro.camelize(key)
+    case model_module(key) do
+      nil ->
+        :skip
+
+      mod ->
+        case mod.find(value) do
+          nil ->
+            raise Laravex.Database.ModelNotFoundException, model: mod, id: value
+
+          model ->
+            model
+        end
+    end
+  end
+
+  defp model_module(key) do
+    mod_name = "App.Models." <> Macro.camelize(to_string(key))
 
     try do
       mod = String.to_existing_atom("Elixir." <> mod_name)
 
-      if function_exported?(mod, :find, 1) do
-        mod.find(value)
-      else
-        nil
-      end
+      if function_exported?(mod, :find, 1), do: mod, else: nil
     rescue
       ArgumentError ->
         mod = Module.concat([mod_name])
 
         case Code.ensure_loaded(mod) do
           {:module, ^mod} ->
-            if function_exported?(mod, :find, 1), do: mod.find(value), else: nil
+            if function_exported?(mod, :find, 1), do: mod, else: nil
 
           _ ->
             nil

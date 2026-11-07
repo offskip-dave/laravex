@@ -7,7 +7,8 @@ defmodule Laravex.Http.Middleware.Authenticate do
     if Laravex.Auth.Guard.check?(request) do
       {:ok, request}
     else
-      if Keyword.get(opts, :json, false) or Laravex.Http.Request.expects_json?(request) do
+      if Keyword.get(opts, :json, false) or Laravex.Http.Request.wants_json?(request) or
+           Laravex.Http.Request.ajax?(request) do
         {:halt, Laravex.Http.Response.json(%{message: "Unauthenticated."}, 401)}
       else
         redirect = Keyword.get(opts, :redirect, "/login")
@@ -67,7 +68,7 @@ defmodule Laravex.Http.Middleware.Authorize do
 
     cond do
       is_nil(user) ->
-        if Laravex.Http.Request.expects_json?(request) do
+        if Laravex.Http.Request.wants_json?(request) or Laravex.Http.Request.ajax?(request) do
           {:halt, Laravex.Http.Response.json(%{message: "Unauthenticated."}, 401)}
         else
           {:halt, Laravex.Http.Response.redirect(Keyword.get(opts, :redirect, "/login"))}
@@ -77,7 +78,7 @@ defmodule Laravex.Http.Middleware.Authorize do
         {:ok, request}
 
       true ->
-        if Laravex.Http.Request.expects_json?(request) do
+        if Laravex.Http.Request.wants_json?(request) or Laravex.Http.Request.ajax?(request) do
           {:halt, Laravex.Http.Response.json(%{message: "This action is unauthorized."}, 403)}
         else
           {:halt, Laravex.Http.Response.html("Forbidden", 403)}
@@ -122,7 +123,7 @@ defmodule Laravex.Http.Middleware.ValidateSignature do
     if Laravex.Http.UrlSigner.valid?(request, opts) do
       {:ok, request}
     else
-      if Laravex.Http.Request.expects_json?(request) do
+      if Laravex.Http.Request.wants_json?(request) or Laravex.Http.Request.ajax?(request) do
         {:halt, Laravex.Http.Response.json(%{message: "Invalid signature."}, 403)}
       else
         {:halt, Laravex.Http.Response.html("Invalid signature.", 403)}

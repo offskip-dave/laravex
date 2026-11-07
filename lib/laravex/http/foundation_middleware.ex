@@ -1,3 +1,174 @@
+defmodule Laravex.Http.Middleware.TrustHosts do
+  @moduledoc """
+  Reject requests whose Host header is not trusted (Laravel TrustHosts).
+
+  Configure `TRUSTED_HOSTS` (comma-separated) or `config("app.trusted_hosts")`.
+  Empty/nil allows all hosts. Patterns may use a leading `*.` subdomain wildcard.
+  """
+
+  def handle(request, _opts) do
+    case trusted_hosts() do
+      [] ->
+        {:ok, request}
+
+      hosts ->
+        host = request_host(request)
+
+        if host && Enum.any?(hosts, &match_host?(&1, host)) do
+          {:ok, request}
+        else
+          {:halt, Laravex.Http.Response.html("Invalid Host header.", 400)}
+        end
+    end
+  end
+
+  defp trusted_hosts do
+    raw =
+      Laravex.Config.Repository.get("app.trusted_hosts") ||
+        Laravex.Env.get("TRUSTED_HOSTS", nil)
+
+    cond do
+      is_nil(raw) or raw == "" or raw == false ->
+        []
+
+      is_binary(raw) ->
+        String.split(raw, ",", trim: true)
+
+      is_list(raw) ->
+        Enum.map(raw, &to_string/1)
+
+      true ->
+        []
+    end
+  end
+
+  defp request_host(request) do
+    Process.get(:laravex_client_host) ||
+      Laravex.Http.Request.header(request, "x-forwarded-host") ||
+      Laravex.Http.Request.header(request, "host")
+  end
+
+  defp match_host?(pattern, host) do
+    pattern = String.downcase(String.trim(pattern))
+    host = String.downcase(String.trim(host)) |> strip_port()
+
+    cond do
+      pattern == host ->
+        true
+
+      String.starts_with?(pattern, "*.") ->
+        suffix = String.trim_leading(pattern, "*.")
+        host == suffix or String.ends_with?(host, "." <> suffix)
+
+      true ->
+        false
+    end
+  end
+
+  defp strip_port(host) do
+    case String.split(host, ":", parts: 2) do
+      [h, _] -> h
+      [h] -> h
+    end
+  end
+end
+
+defmodule Laravex.Http.Middleware.SetCacheHeaders do
+  @moduledoc """
+  Set Cache-Control / ETag on the response (`cache.headers` alias).
+
+      Router.get("/asset", handler, middleware: ["cache.headers:public;max_age=60;etag"])
+  """
+
+  def handle(request, opts) do
+    Process.put(:laravex_cache_headers, opts)
+    {:ok, request}
+  end
+
+  def terminate(_request, %Laravex.Http.Response{} = response) do
+    case Process.get(:laravex_cache_headers) do
+      nil ->
+        response
+
+      opts when is_list(opts) ->
+        apply_headers(response, opts)
+
+      _ ->
+        response
+    end
+  end
+
+  def parse_arg(nil), do: []
+  def parse_arg(""), do: []
+
+  def parse_arg(arg) when is_binary(arg) do
+    arg
+    |> String.split(";", trim: true)
+    |> Enum.reduce([], fn part, acc ->
+      part = String.trim(part)
+
+      cond do
+        part in ["public", "private", "no_cache", "no_store", "must_revalidate", "etag"] ->
+          Keyword.put(acc, String.to_atom(part), true)
+
+        String.contains?(part, "=") ->
+          [k, v] = String.split(part, "=", parts: 2)
+          key = k |> String.trim() |> String.to_atom()
+          val = String.trim(v)
+
+          value =
+            case Integer.parse(val) do
+              {n, ""} -> n
+              _ -> val
+            end
+
+          Keyword.put(acc, key, value)
+
+        true ->
+          acc
+      end
+    end)
+  end
+
+  defp apply_headers(response, opts) do
+    directives =
+      []
+      |> maybe_dir(opts, :public, "public")
+      |> maybe_dir(opts, :private, "private")
+      |> maybe_dir(opts, :no_cache, "no-cache")
+      |> maybe_dir(opts, :no_store, "no-store")
+      |> maybe_dir(opts, :must_revalidate, "must-revalidate")
+      |> then(fn d ->
+        case Keyword.get(opts, :max_age) do
+          n when is_integer(n) -> ["max-age=#{n}" | d]
+          _ -> d
+        end
+      end)
+      |> Enum.reverse()
+
+    headers =
+      if directives != [] do
+        [{"cache-control", Enum.join(directives, ", ")} | response.headers]
+      else
+        response.headers
+      end
+
+    headers =
+      if Keyword.get(opts, :etag) do
+        etag = :crypto.hash(:sha256, response.body) |> Base.encode16(case: :lower)
+        [{"etag", ~s("#{etag}")} | headers]
+      else
+        headers
+      end
+
+    %{response | headers: headers}
+  end
+
+  defp maybe_dir(dirs, opts, key, value) do
+    if Keyword.get(opts, key), do: [value | dirs], else: dirs
+  end
+end
+
 defmodule Laravex.Http.Middleware.TrustProxies do
   @moduledoc """
   Honor `X-Forwarded-*` when the peer is a trusted proxy (Laravel TrustProxies).

@@ -11,8 +11,29 @@ defmodule Laravex.Foundation.Exceptions do
     %{exceptions | should_render_json_when: fun}
   end
 
+  def reportable(%__MODULE__{} = exceptions, fun) when is_function(fun, 1) do
+    %{exceptions | reporters: exceptions.reporters ++ [fun]}
+  end
+
   def report(exceptions \\ nil, error) do
-    _ = exceptions
+    reporters =
+      case exceptions do
+        %{reporters: list} when is_list(list) -> list
+        _ -> []
+      end
+
+    Enum.each(reporters, fn
+      fun when is_function(fun, 1) ->
+        try do
+          fun.(error)
+        rescue
+          _ -> :ok
+        end
+
+      _ ->
+        :ok
+    end)
+
     Laravex.Log.Logger.error(Exception.message(error), %{exception: error.__struct__})
     :ok
   end
@@ -25,21 +46,15 @@ defmodule Laravex.Foundation.Exceptions do
       _ ->
         report(exceptions, error)
 
-        status =
-          case error do
-            %Laravex.Http.HttpException{status: s} -> s
-            %Laravex.Support.DumpException{} -> 500
-            _ -> 500
-          end
-
-        message = Exception.message(error)
+        status = status_for(error)
+        message = public_message(error, status)
         debug? = Laravex.Config.Repository.get("app.debug", false) in [true, "true", 1, "1"]
 
         if should_json?(exceptions, request) do
           body =
             Laravex.Support.JSON.encode!(%{
               message: message,
-              exception: error.__struct__ |> to_string(),
+              exception: if(debug?, do: error.__struct__ |> to_string(), else: nil),
               debug: if(debug?, do: Exception.format(:error, error, []), else: nil)
             })
 
@@ -49,13 +64,35 @@ defmodule Laravex.Foundation.Exceptions do
         else
           body =
             if debug? do
-              debug_page(status, message, error)
+              debug_page(status, Exception.message(error), error)
             else
-              "<!DOCTYPE html><html><body><h1>#{status}</h1><p>Server Error</p></body></html>"
+              "<!DOCTYPE html><html><body><h1>#{status}</h1><p>#{html_escape(message)}</p></body></html>"
             end
 
           Laravex.Http.Response.html(body, status)
         end
+    end
+  end
+
+  defp status_for(%Laravex.Http.HttpException{status: s}) when is_integer(s), do: s
+  defp status_for(%Laravex.Database.ModelNotFoundException{}), do: 404
+  defp status_for(%Laravex.Support.DumpException{}), do: 500
+  defp status_for(_), do: 500
+
+  defp public_message(%Laravex.Http.HttpException{message: m}, _status)
+       when is_binary(m) and m != "",
+       do: m
+
+  defp public_message(%Laravex.Database.ModelNotFoundException{}, _status), do: "Not Found"
+
+  defp public_message(_error, status) do
+    case status do
+      401 -> "Unauthenticated."
+      403 -> "This action is unauthorized."
+      404 -> "Not Found"
+      419 -> "Page Expired"
+      429 -> "Too Many Attempts."
+      _ -> "Server Error"
     end
   end
 
@@ -78,7 +115,9 @@ defmodule Laravex.Foundation.Exceptions do
     fun.(request)
   end
 
-  defp should_json?(_, _), do: false
+  defp should_json?(_, request) do
+    Laravex.Http.Request.wants_json?(request) or Laravex.Http.Request.ajax?(request)
+  end
 
   defp debug_page(status, message, error) do
     """
