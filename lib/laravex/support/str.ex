@@ -116,6 +116,27 @@ defmodule Laravex.Support.Str do
 
   def is_uuid?(_), do: false
 
+  def is_json?(s) when is_binary(s) do
+    match?({:ok, _}, Laravex.Support.JSON.decode(s))
+  end
+
+  def is_json?(_), do: false
+
+  def is_ip?(s) when is_binary(s), do: is_ipv4?(s) or is_ipv6?(s)
+  def is_ip?(_), do: false
+
+  def is_ipv4?(s) when is_binary(s) do
+    match?({:ok, _}, :inet.parse_ipv4_address(String.to_charlist(s)))
+  end
+
+  def is_ipv4?(_), do: false
+
+  def is_ipv6?(s) when is_binary(s) do
+    match?({:ok, _}, :inet.parse_ipv6_address(String.to_charlist(s)))
+  end
+
+  def is_ipv6?(_), do: false
+
   def squish(s) do
     s
     |> to_string()

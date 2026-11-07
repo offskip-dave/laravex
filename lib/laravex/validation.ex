@@ -211,10 +211,32 @@ defmodule Laravex.Validation do
     if "sometimes" in rule_strs and not field_present?(data, field) do
       []
     else
-      Enum.flat_map(rules, fn rule ->
-        check_rule(field, value, rule, data)
-        |> Enum.map(&format_error(field, rule_name(rule), &1, opts))
+      {bail?, rules} = extract_bail(rules)
+
+      Enum.reduce_while(rules, [], fn rule, acc ->
+        msgs =
+          check_rule(field, value, rule, data)
+          |> Enum.map(&format_error(field, rule_name(rule), &1, opts))
+
+        cond do
+          msgs == [] ->
+            {:cont, acc}
+
+          bail? ->
+            {:halt, acc ++ msgs}
+
+          true ->
+            {:cont, acc ++ msgs}
+        end
       end)
+    end
+  end
+
+  defp extract_bail(rules) do
+    if Enum.any?(rules, fn r -> rule_name(r) == "bail" end) do
+      {true, Enum.reject(rules, fn r -> rule_name(r) == "bail" end)}
+    else
+      {false, rules}
     end
   end
 
@@ -541,10 +563,136 @@ defmodule Laravex.Validation do
           true -> ["The #{field} field must be #{size}."]
         end
 
+      "bail" ->
+        []
+
+      "json" ->
+        if is_nil(value) or blank?(value) or valid_json?(value),
+          do: [],
+          else: ["The #{field} field must be a valid JSON string."]
+
+      "ip" ->
+        if is_nil(value) or blank?(value) or valid_ip?(value),
+          do: [],
+          else: ["The #{field} field must be a valid IP address."]
+
+      "ipv4" ->
+        if is_nil(value) or blank?(value) or valid_ipv4?(value),
+          do: [],
+          else: ["The #{field} field must be a valid IPv4 address."]
+
+      "ipv6" ->
+        if is_nil(value) or blank?(value) or valid_ipv6?(value),
+          do: [],
+          else: ["The #{field} field must be a valid IPv6 address."]
+
+      "password" ->
+        password_rule(field, value, [])
+
+      "password:" <> rest ->
+        flags = rest |> String.split(",") |> Enum.map(&String.trim/1)
+        password_rule(field, value, flags)
+
       other ->
         custom_rule(field, value, other)
     end
   end
+
+  defp password_rule(_field, value, _flags) when is_nil(value) or value == "", do: []
+
+  defp password_rule(field, value, flags) do
+    value = to_string(value)
+    min = password_min(flags)
+
+    []
+    |> then(fn errs ->
+      if String.length(value) < min,
+        do: ["The #{field} field must be at least #{min} characters." | errs],
+        else: errs
+    end)
+    |> then(fn errs ->
+      if "letters" in flags and not Regex.match?(~r/\p{L}/u, value),
+        do: ["The #{field} field must contain at least one letter." | errs],
+        else: errs
+    end)
+    |> then(fn errs ->
+      if "mixed" in flags and
+           not (Regex.match?(~r/\p{Ll}/u, value) and Regex.match?(~r/\p{Lu}/u, value)),
+         do: ["The #{field} field must contain both uppercase and lowercase letters." | errs],
+         else: errs
+    end)
+    |> then(fn errs ->
+      if "numbers" in flags and not Regex.match?(~r/\d/, value),
+        do: ["The #{field} field must contain at least one number." | errs],
+        else: errs
+    end)
+    |> then(fn errs ->
+      if "symbols" in flags and not Regex.match?(~r/[^\p{L}\d\s]/u, value),
+        do: ["The #{field} field must contain at least one symbol." | errs],
+        else: errs
+    end)
+    |> Enum.reverse()
+  end
+
+  defp password_min(flags) do
+    case Enum.find_index(flags, &(&1 == "min" or String.starts_with?(&1, "min"))) do
+      nil ->
+        8
+
+      idx ->
+        case Enum.at(flags, idx) do
+          "min" ->
+            case Enum.at(flags, idx + 1) do
+              n when is_binary(n) ->
+                case Integer.parse(n) do
+                  {i, _} -> i
+                  _ -> 8
+                end
+
+              _ ->
+                8
+            end
+
+          "min:" <> n ->
+            String.to_integer(String.trim(n))
+
+          "min," <> n ->
+            String.to_integer(String.trim(n))
+
+          _ ->
+            8
+        end
+    end
+  end
+
+  defp valid_json?(value) when is_binary(value) do
+    case Laravex.Support.JSON.decode(value) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  end
+
+  defp valid_json?(_), do: false
+
+  defp valid_ip?(value), do: valid_ipv4?(value) or valid_ipv6?(value)
+
+  defp valid_ipv4?(value) when is_binary(value) do
+    case :inet.parse_ipv4_address(String.to_charlist(value)) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  end
+
+  defp valid_ipv4?(_), do: false
+
+  defp valid_ipv6?(value) when is_binary(value) do
+    case :inet.parse_ipv6_address(String.to_charlist(value)) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  end
+
+  defp valid_ipv6?(_), do: false
 
   defp compare_numeric_rule(field, value, data, other, op) do
     if is_nil(value) or blank?(value) do

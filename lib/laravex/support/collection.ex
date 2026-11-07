@@ -227,6 +227,49 @@ defmodule Laravex.Support.Collection do
     if truthy?(condition), do: c, else: fun.(c)
   end
 
+  def avg(%__MODULE__{items: []}), do: nil
+
+  def avg(%__MODULE__{items: items}) do
+    nums = Enum.filter(items, &is_number/1)
+    if nums == [], do: nil, else: Enum.sum(nums) / length(nums)
+  end
+
+  def avg(%__MODULE__{} = c, key), do: c |> pluck(key) |> avg()
+  def average(c), do: avg(c)
+  def average(c, key), do: avg(c, key)
+
+  def min(%__MODULE__{items: []}), do: nil
+  def min(%__MODULE__{items: items}), do: Enum.min(Enum.filter(items, &is_number/1), fn -> nil end)
+  def min(%__MODULE__{} = c, key), do: c |> pluck(key) |> min()
+
+  def max(%__MODULE__{items: []}), do: nil
+  def max(%__MODULE__{items: items}), do: Enum.max(Enum.filter(items, &is_number/1), fn -> nil end)
+  def max(%__MODULE__{} = c, key), do: c |> pluck(key) |> max()
+
+  def chunk(%__MODULE__{items: items}, size) when is_integer(size) and size > 0 do
+    new(Enum.chunk_every(items, size) |> Enum.map(&new/1))
+  end
+
+  def flatten(%__MODULE__{items: items}) do
+    new(
+      Enum.flat_map(items, fn
+        %__MODULE__{items: nested} -> nested
+        list when is_list(list) -> list
+        other -> [other]
+      end)
+    )
+  end
+
+  def diff(%__MODULE__{items: a}, %__MODULE__{items: b}), do: new(a -- b)
+  def diff(%__MODULE__{items: a}, enumerable), do: new(a -- Enum.to_list(enumerable))
+
+  def pipe(%__MODULE__{} = c, fun) when is_function(fun, 1), do: fun.(c)
+
+  def tap(%__MODULE__{} = c, fun) when is_function(fun, 1) do
+    fun.(c)
+    c
+  end
+
   defp truthy?(v) when v in [false, nil, 0, "", "0"], do: false
   defp truthy?(_), do: true
 

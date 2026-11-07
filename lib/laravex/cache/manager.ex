@@ -11,16 +11,36 @@ defmodule Laravex.Cache.Manager do
     GenServer.call(__MODULE__, {:put, to_string(key), value, ttl})
   end
 
+  def forever(key, value), do: put(key, value, nil)
+
   def get(key, default \\ nil) do
     GenServer.call(__MODULE__, {:get, to_string(key), default})
+  end
+
+  def has?(key), do: get(key, :__missing__) != :__missing__
+
+  @doc "Store value only if the key is missing. Returns true if stored."
+  def add(key, value, ttl \\ nil) do
+    if has?(key) do
+      false
+    else
+      put(key, value, ttl)
+      true
+    end
+  end
+
+  def pull(key, default \\ nil) do
+    value = get(key, default)
+    forget(key)
+    value
   end
 
   def forget(key), do: GenServer.call(__MODULE__, {:forget, to_string(key)})
   def flush, do: GenServer.call(__MODULE__, :flush)
 
   def remember(key, ttl, fun) when is_function(fun, 0) do
-    case get(key) do
-      nil ->
+    case get(key, :__missing__) do
+      :__missing__ ->
         value = fun.()
         put(key, value, ttl)
         value
@@ -29,6 +49,14 @@ defmodule Laravex.Cache.Manager do
         value
     end
   end
+
+  def remember_forever(key, fun) when is_function(fun, 0), do: remember(key, nil, fun)
+
+  def increment(key, amount \\ 1) when is_number(amount) do
+    GenServer.call(__MODULE__, {:increment, to_string(key), amount})
+  end
+
+  def decrement(key, amount \\ 1) when is_number(amount), do: increment(key, -amount)
 
   @impl true
   def handle_call({:put, key, value, ttl}, _from, state) do
@@ -78,10 +106,90 @@ defmodule Laravex.Cache.Manager do
   end
 
   def handle_call({:forget, key}, _from, state) do
+    store = effective_store()
+
+    case store do
+      "file" -> forget_file(key)
+      "database" -> forget_db(key)
+      _ -> :ok
+    end
+
     {:reply, :ok, %{state | array: Map.delete(state.array, key)}}
   end
 
   def handle_call(:flush, _from, _state), do: {:reply, :ok, %{array: %{}}}
+
+  def handle_call({:increment, key, amount}, _from, state) do
+    {value, state} = do_get_entry(key, state)
+
+    next =
+      case value do
+        n when is_number(n) -> n + amount
+        _ -> amount
+      end
+
+    {:reply, next, put_entry(state, key, %{value: next, expires: nil})}
+  end
+
+  defp do_get_entry(key, state) do
+    store = effective_store()
+
+    entry =
+      case store do
+        "array" -> Map.get(state.array, key)
+        "file" -> read_file(key) || Map.get(state.array, key)
+        "database" -> read_db(key) || Map.get(state.array, key)
+        _ -> Map.get(state.array, key)
+      end
+
+    value =
+      cond do
+        is_nil(entry) -> nil
+        entry.expires && entry.expires < System.system_time(:second) -> nil
+        true -> entry.value
+      end
+
+    {value, state}
+  end
+
+  defp put_entry(state, key, entry) do
+    store = effective_store()
+
+    case store do
+      "array" ->
+        %{state | array: Map.put(state.array, key, entry)}
+
+      "file" ->
+        write_file(key, entry)
+        state
+
+      "database" ->
+        write_db(key, entry)
+        %{state | array: Map.put(state.array, key, entry)}
+
+      _ ->
+        %{state | array: Map.put(state.array, key, entry)}
+    end
+  end
+
+  defp forget_file(key) do
+    path =
+      Path.join(
+        Laravex.Foundation.Application.base_path(),
+        "storage/framework/cache/data/#{Base.encode16(key)}"
+      )
+
+    if File.exists?(path), do: File.rm(path)
+    :ok
+  end
+
+  defp forget_db(key) do
+    if Laravex.Database.Schema.has_table?("cache") do
+      Laravex.Database.Connection.execute("DELETE FROM cache WHERE key = ?", [key])
+    end
+
+    :ok
+  end
 
   @supported_drivers ~w(array file database)
 

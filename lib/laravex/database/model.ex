@@ -160,6 +160,18 @@ defmodule Laravex.Database.Model do
         Laravex.Database.Model.load_missing(models, __MODULE__, relations)
       end
 
+      def load_count(%__MODULE__{} = model, relations) do
+        Laravex.Database.Model.load_count(model, __MODULE__, relations)
+      end
+
+      def load_count(models, relations) when is_list(models) do
+        Laravex.Database.Model.load_count(models, __MODULE__, relations)
+      end
+
+      def without(%__MODULE__{} = model, relations) do
+        Laravex.Database.Model.without(model, relations)
+      end
+
       def upsert(rows, unique_by, update \\ nil) do
         Laravex.Database.Query.upsert(table_name(), List.wrap(rows), unique_by, update)
       end
@@ -584,6 +596,28 @@ defmodule Laravex.Database.Model do
       end)
 
     with_relations(models, owner_mod, rels)
+  end
+
+  def load_count(model, owner_mod, relations) when not is_list(model) do
+    [loaded] = with_counts([model], owner_mod, relations)
+    loaded
+  end
+
+  def load_count(models, owner_mod, relations) when is_list(models) do
+    with_counts(models, owner_mod, relations)
+  end
+
+  @doc "Unload relation(s) previously attached via `with`/`load` (clears Process bag)."
+  def without(model, relations) do
+    relations
+    |> List.wrap()
+    |> Enum.each(fn name ->
+      name = to_string(name)
+      Process.delete(relation_key(model, name))
+      Process.delete(relation_key(model, name <> "_count"))
+    end)
+
+    model
   end
 
   def batch_load_relation(models, owner_mod, relation_name, opts \\ [])
