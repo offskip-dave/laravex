@@ -61,7 +61,7 @@ defmodule Laravex.Console.Kernel do
     "make:provider" => {&__MODULE__.cmd_make_provider/1, "Create a provider"},
     "make:command" => {&__MODULE__.cmd_make_command/1, "Create a command"},
     "make:middleware" => {&__MODULE__.cmd_make_middleware/1, "Create middleware"},
-    "make:resource" => {&__MODULE__.cmd_make_resource/1, "Create an API resource"},
+    "make:resource" => {&__MODULE__.cmd_make_resource/1, "Create an API resource (--collection)"},
     "make:factory" => {&__MODULE__.cmd_make_factory/1, "Create a factory"},
     "make:seeder" => {&__MODULE__.cmd_make_seeder/1, "Create a seeder"},
     "make:view" => {&__MODULE__.cmd_make_view/1, "Create a Blade view"},
@@ -592,8 +592,12 @@ defmodule Laravex.Console.Kernel do
   def cmd_make_command(_), do: usage("make:command", "Name")
   def cmd_make_middleware([name | _]), do: Laravex.Generators.make_middleware(name)
   def cmd_make_middleware(_), do: usage("make:middleware", "Name")
-  def cmd_make_resource([name | _]), do: Laravex.Generators.make_resource(name)
-  def cmd_make_resource(_), do: usage("make:resource", "Name")
+  def cmd_make_resource([name | rest]) do
+    collection? = "--collection" in rest or "-c" in rest
+    Laravex.Generators.make_resource(name, collection: collection?)
+  end
+
+  def cmd_make_resource(_), do: usage("make:resource", "Name [--collection]")
   def cmd_make_factory([name | _]), do: Laravex.Generators.make_factory(name)
   def cmd_make_factory(_), do: usage("make:factory", "Name")
   def cmd_make_seeder([name | _]), do: Laravex.Generators.make_seeder(name)

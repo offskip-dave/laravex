@@ -9,13 +9,19 @@ defmodule Laravex.Http.Resource do
           merge(%{
             id: user.id,
             name: user.name,
-            posts: when_loaded(user, :posts)
+            posts: when_loaded(user, :posts),
+            role: when_cond(user.admin?, "admin")
           })
           |> Map.merge(merge_when(user.admin?, %{role: "admin"}))
         end
 
         def additional(_user), do: %{meta: %{version: 1}}
       end
+
+  Collections (Laravel `UserResource::collection($users)`):
+
+      UserResource.collection(users) |> Laravex.Http.ResourceCollection.response()
+      UserResource.collection_response(users)
   """
 
   @missing :__laravex_missing__
@@ -23,23 +29,34 @@ defmodule Laravex.Http.Resource do
   defmacro __using__(_opts) do
     quote do
       import Laravex.Http.Resource,
-        only: [when_loaded: 2, when_loaded: 3, merge: 1, merge_when: 2]
+        only: [
+          when_loaded: 2,
+          when_loaded: 3,
+          when_cond: 2,
+          when_cond: 3,
+          merge: 1,
+          merge_when: 2
+        ]
 
       def wrap, do: "data"
       def additional(_resource), do: %{}
 
-      def collection(models) when is_list(models), do: Enum.map(models, &to_map/1)
+      @doc "Anonymous ResourceCollection for a list or paginator (Laravel `::collection`)."
+      def collection(resources) do
+        Laravex.Http.ResourceCollection.anonymous(__MODULE__, resources)
+      end
 
       def make(model) do
         Laravex.Http.Resource.respond(__MODULE__, to_map(model), additional(model))
       end
 
-      def collection_response(models) when is_list(models) do
-        Laravex.Http.Resource.respond(__MODULE__, collection(models), additional(models))
+      @doc "JSON response for a list or paginator via ResourceCollection."
+      def collection_response(resources) do
+        __MODULE__.collection(resources) |> Laravex.Http.ResourceCollection.response()
       end
 
       def paginated(page) when is_map(page) do
-        Laravex.Http.Response.json_paginated(page, &to_map/1)
+        collection_response(page)
       end
 
       defoverridable wrap: 0, additional: 1
@@ -49,8 +66,8 @@ defmodule Laravex.Http.Resource do
   def respond(mod, data, extra \\ %{}) when is_map(extra) do
     payload =
       case mod.wrap() do
-        false -> data
-        nil -> data
+        false -> if is_map(data), do: data, else: %{"data" => data}
+        nil -> if is_map(data), do: data, else: %{"data" => data}
         key -> %{to_string(key) => data}
       end
 
@@ -71,6 +88,15 @@ defmodule Laravex.Http.Resource do
     else
       @missing
     end
+  end
+
+  @doc "Laravel `$this->when` — value or MissingValue."
+  def when_cond(condition, value) do
+    if truthy?(condition), do: value, else: @missing
+  end
+
+  def when_cond(condition, value, default) do
+    if truthy?(condition), do: value, else: default
   end
 
   @doc "Drop MissingValue entries from a resource map."

@@ -206,16 +206,37 @@ defmodule Laravex.Generators do
     """)
   end
 
-  def make_resource(name) do
-    stub("Http/Resources", name, """
-    defmodule App.Http.Resources.#{name} do
-      use Laravex.Http.Resource
+  def make_resource(name, opts \\ []) do
+    if Keyword.get(opts, :collection, false) do
+      collects = Keyword.get(opts, :collects) || resource_name_for_collection(name)
 
-      def to_map(model) do
-        %{id: Map.get(model, :id)}
+      stub("Http/Resources", name, """
+      defmodule App.Http.Resources.#{name} do
+        use Laravex.Http.ResourceCollection, collects: App.Http.Resources.#{collects}
+
+        def additional(_resources), do: %{}
       end
+      """)
+    else
+      stub("Http/Resources", name, """
+      defmodule App.Http.Resources.#{name} do
+        use Laravex.Http.Resource
+
+        def to_map(model) do
+          %{id: Map.get(model, :id)}
+        end
+      end
+      """)
     end
-    """)
+  end
+
+  defp resource_name_for_collection(name) do
+    name
+    |> to_string()
+    |> String.replace_suffix("Collection", "")
+    |> then(fn base ->
+      if String.ends_with?(base, "Resource"), do: base, else: base <> "Resource"
+    end)
   end
 
   def make_command(name) do
