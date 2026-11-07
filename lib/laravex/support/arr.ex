@@ -85,6 +85,11 @@ defmodule Laravex.Support.Arr do
     get(map, key, :__missing__) != :__missing__
   end
 
+  @doc "True if any of the keys exist (Laravel `Arr::hasAny`)."
+  def has_any?(map, keys) when is_map(map) and is_list(keys) do
+    Enum.any?(keys, &has?(map, &1))
+  end
+
   @doc "Add key/value only if the key is missing."
   def add(map, key, value) when is_map(map) do
     if has?(map, key), do: map, else: set(map, key, value)

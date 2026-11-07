@@ -124,6 +124,32 @@ defmodule Laravex.Filesystem.Storage do
     end
   end
 
+  @doc "Recursively list files under a directory (Laravel `allFiles`)."
+  def all_files(directory, disk \\ nil) do
+    d = disk(disk)
+    abs = Path.join(d.root, directory)
+    collect_files(abs, directory)
+  end
+
+  defp collect_files(abs, relative) do
+    case File.ls(abs) do
+      {:ok, entries} ->
+        Enum.flat_map(entries, fn name ->
+          full = Path.join(abs, name)
+          rel = Path.join(relative, name) |> String.trim_leading("/")
+
+          cond do
+            File.regular?(full) -> [rel]
+            File.dir?(full) -> collect_files(full, rel)
+            true -> []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
   def delete_directory(directory, disk \\ nil) do
     d = disk(disk)
     _ = File.rm_rf(Path.join(d.root, directory))
@@ -146,6 +172,23 @@ defmodule Laravex.Filesystem.Storage do
 
   def put_file(directory, %Laravex.Http.UploadedFile{} = file, disk_name \\ "public") do
     store(file, directory, disk_name)
+  end
+
+  @doc "Store an uploaded file under a given name (Laravel `putFileAs`)."
+  def put_file_as(directory, %Laravex.Http.UploadedFile{} = file, name, disk_name \\ "public")
+      when is_binary(name) do
+    ext =
+      case Laravex.Http.UploadedFile.extension(file) do
+        "" -> ""
+        e -> "." <> e
+      end
+
+    basename =
+      if Path.extname(name) == "" and ext != "", do: name <> ext, else: name
+
+    relative = Path.join([directory, basename]) |> String.trim_leading("/")
+    put(relative, file.contents || "", disk_name)
+    relative
   end
 
   def url(path, disk_name \\ "public") do

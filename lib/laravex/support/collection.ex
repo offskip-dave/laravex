@@ -176,6 +176,76 @@ defmodule Laravex.Support.Collection do
     new(Enum.drop(items, n))
   end
 
+  @doc "Slice items from `start` (Laravel `slice`). Negative start counts from the end."
+  def slice(%__MODULE__{items: items}, start, take_n \\ nil) when is_integer(start) do
+    len = length(items)
+    offset = if start < 0, do: Kernel.max(len + start, 0), else: start
+
+    taken =
+      cond do
+        is_nil(take_n) -> Enum.drop(items, offset)
+        is_integer(take_n) and take_n >= 0 -> Enum.slice(items, offset, take_n)
+        true -> []
+      end
+
+    new(taken)
+  end
+
+  def nth(%__MODULE__{items: items}, index, default \\ nil) when is_integer(index) do
+    Enum.at(items, index, default)
+  end
+
+  def get(%__MODULE__{items: items}, key, default \\ nil) do
+    key_str = to_string(key)
+
+    case Enum.find(items, fn
+           {k, _} -> to_string(k) == key_str
+           _ -> false
+         end) do
+      {_, v} ->
+        v
+
+      nil ->
+        idx =
+          cond do
+            is_integer(key) -> key
+            match?({_, ""}, Integer.parse(key_str)) ->
+              {n, _} = Integer.parse(key_str)
+              n
+
+            true ->
+              nil
+          end
+
+        if is_integer(idx), do: Enum.at(items, idx, default), else: default
+    end
+  end
+
+  def put(%__MODULE__{items: items}, key, value) do
+    key_str = to_string(key)
+
+    cond do
+      Enum.any?(items, &match?({_, _}, &1)) or items == [] ->
+        case Enum.find_index(items, fn
+               {k, _} -> to_string(k) == key_str
+               _ -> false
+             end) do
+          nil -> new(items ++ [{key, value}])
+          idx -> new(List.replace_at(items, idx, {key, value}))
+        end
+
+      is_integer(key) ->
+        if key >= length(items) do
+          new(items ++ List.duplicate(nil, key - length(items)) ++ [value])
+        else
+          new(List.replace_at(items, key, value))
+        end
+
+      true ->
+        new(items ++ [{key, value}])
+    end
+  end
+
   def reverse(%__MODULE__{items: items}), do: new(Enum.reverse(items))
 
   def contains?(%__MODULE__{items: items}, fun) when is_function(fun, 1) do

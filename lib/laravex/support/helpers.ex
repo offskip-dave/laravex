@@ -157,6 +157,43 @@ defmodule Laravex.Support.Helpers do
 
   def away(url) when is_binary(url), do: redirect(url)
 
+  @doc "Redirect to the current request URL (Laravel `redirect()->refresh()`)."
+  def refresh do
+    case Process.get(:laravex_request) do
+      %{path: path, query: query} when is_map(query) ->
+        qs =
+          query
+          |> Enum.map(fn {k, v} -> {to_string(k), to_string(v)} end)
+          |> URI.encode_query()
+
+        to = if qs == "", do: path || "/", else: (path || "/") <> "?" <> qs
+        redirect(to)
+
+      %{path: path} when is_binary(path) ->
+        redirect(path)
+
+      _ ->
+        redirect("/")
+    end
+  end
+
+  @doc "Attach validation errors to the session (Laravel `withErrors`)."
+  def with_errors(response, errors) when is_map(errors) do
+    case Process.get(:laravex_request) do
+      nil ->
+        response
+
+      request ->
+        request = Laravex.Validation.flash_errors(request, errors)
+        Process.put(:laravex_request, request)
+        response
+    end
+  end
+
+  def redirect_with_errors(to, errors) when is_binary(to) and is_map(errors) do
+    to |> redirect() |> with_errors(errors)
+  end
+
   def back(fallback \\ "/") do
     case Process.get(:laravex_request) do
       nil ->
