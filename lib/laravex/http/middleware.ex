@@ -84,6 +84,12 @@ defmodule Laravex.Http.Middleware do
       "guest" ->
         {Laravex.Http.Middleware.RedirectIfAuthenticated, []}
 
+      "verified" ->
+        {Laravex.Http.Middleware.EnsureEmailIsVerified, []}
+
+      "password.confirm" ->
+        {Laravex.Http.Middleware.RequirePasswordConfirmation, []}
+
       "signed" ->
         {Laravex.Http.Middleware.ValidateSignature, []}
 

@@ -211,6 +211,22 @@ defmodule Laravex.Database.Query do
     }
   end
 
+  def or_where_between(%__MODULE__{} = q, column, low, high) do
+    %{
+      q
+      | wheres: q.wheres ++ [{:or, "#{column} BETWEEN ? AND ?", :between}],
+        bindings: q.bindings ++ [low, high]
+    }
+  end
+
+  def or_where_not_between(%__MODULE__{} = q, column, low, high) do
+    %{
+      q
+      | wheres: q.wheres ++ [{:or, "#{column} NOT BETWEEN ? AND ?", :between}],
+        bindings: q.bindings ++ [low, high]
+    }
+  end
+
   def where_like(%__MODULE__{} = q, column, pattern) when is_binary(pattern) do
     %{q | wheres: q.wheres ++ [{"#{column} LIKE ?", pattern}], bindings: q.bindings ++ [pattern]}
   end

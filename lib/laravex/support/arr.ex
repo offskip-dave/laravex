@@ -90,6 +90,11 @@ defmodule Laravex.Support.Arr do
     Enum.any?(keys, &has?(map, &1))
   end
 
+  @doc "True if all of the keys exist (Laravel `Arr::has` with multiple keys)."
+  def has_all?(map, keys) when is_map(map) and is_list(keys) do
+    Enum.all?(keys, &has?(map, &1))
+  end
+
   @doc "Add key/value only if the key is missing."
   def add(map, key, value) when is_map(map) do
     if has?(map, key), do: map, else: set(map, key, value)

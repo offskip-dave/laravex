@@ -58,6 +58,7 @@ defmodule Laravex.View do
     |> replace_push()
     |> replace_push_once()
     |> replace_prepend()
+    |> replace_prepend_once()
     |> replace_auth_directives(assigns)
     |> replace_links(assigns)
     |> replace_forelse(assigns)
@@ -682,6 +683,21 @@ defmodule Laravex.View do
   defp replace_prepend(contents) do
     Regex.replace(~r/@prepend\(['"]([^'"]+)['"]\)(.*?)@endprepend/s, contents, fn _, stack, body ->
       push_stack(stack, String.trim(body), :prepend)
+      ""
+    end)
+  end
+
+  defp replace_prepend_once(contents) do
+    Regex.replace(~r/@prependOnce\(['"]([^'"]+)['"]\)(.*?)@endPrependOnce/s, contents, fn _, stack, body ->
+      body = String.trim(body)
+      once_key = {:laravex_prepend_once, stack, :erlang.phash2(body)}
+      seen = Process.get(:laravex_prepend_once, MapSet.new())
+
+      unless MapSet.member?(seen, once_key) do
+        Process.put(:laravex_prepend_once, MapSet.put(seen, once_key))
+        push_stack(stack, body, :prepend)
+      end
+
       ""
     end)
   end

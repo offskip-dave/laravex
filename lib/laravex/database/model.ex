@@ -136,6 +136,24 @@ defmodule Laravex.Database.Model do
         Laravex.Database.Model.where_doesnt_have(__MODULE__, q, relation, constraint)
       end
 
+      def or_where_doesnt_have(relation) when is_atom(relation) or is_binary(relation) do
+        Laravex.Database.Model.or_where_doesnt_have(__MODULE__, query(), relation, nil)
+      end
+
+      def or_where_doesnt_have(%Laravex.Database.Query{} = q, relation) do
+        Laravex.Database.Model.or_where_doesnt_have(__MODULE__, q, relation, nil)
+      end
+
+      def or_where_doesnt_have(relation, constraint)
+          when (is_atom(relation) or is_binary(relation)) and
+                 (is_function(constraint, 1) or is_nil(constraint)) do
+        Laravex.Database.Model.or_where_doesnt_have(__MODULE__, query(), relation, constraint)
+      end
+
+      def or_where_doesnt_have(%Laravex.Database.Query{} = q, relation, constraint) do
+        Laravex.Database.Model.or_where_doesnt_have(__MODULE__, q, relation, constraint)
+      end
+
       def has(relation) when is_atom(relation) or is_binary(relation) do
         where_has(relation)
       end
@@ -272,6 +290,16 @@ defmodule Laravex.Database.Model do
           find(id)
         else
           find(id)
+        end
+      end
+
+      @doc "True when the model has a non-nil `deleted_at` (Laravel `trashed()`)."
+      def trashed?(%__MODULE__{} = model) do
+        if unquote(soft_deletes) do
+          deleted = Laravex.Database.Model.get_attribute(model, "deleted_at")
+          not is_nil(deleted) and deleted != ""
+        else
+          false
         end
       end
 
@@ -520,6 +548,11 @@ defmodule Laravex.Database.Model do
   def where_doesnt_have(owner_mod, %Laravex.Database.Query{} = q, relation, constraint \\ nil) do
     {sql, bindings} = exists_sql(owner_mod, q.table, relation, constraint)
     Laravex.Database.Query.where_raw(q, "NOT EXISTS (#{sql})", bindings)
+  end
+
+  def or_where_doesnt_have(owner_mod, %Laravex.Database.Query{} = q, relation, constraint \\ nil) do
+    {sql, bindings} = exists_sql(owner_mod, q.table, relation, constraint)
+    Laravex.Database.Query.or_where_raw(q, "NOT EXISTS (#{sql})", bindings)
   end
 
   defp exists_sql(owner_mod, owner_table, relation, constraint) do

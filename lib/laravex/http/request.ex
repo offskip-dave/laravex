@@ -96,6 +96,10 @@ defmodule Laravex.Http.Request do
     Enum.any?(keys, &has?(request, &1))
   end
 
+  def has_all?(%__MODULE__{} = request, keys) when is_list(keys) do
+    Enum.all?(keys, &has?(request, &1))
+  end
+
   def missing?(%__MODULE__{} = request, key), do: not has?(request, key)
 
   def filled?(%__MODULE__{} = request, key) do
