@@ -1,0 +1,7 @@
+# Port of public/.htaccess (Apache). Unused by the Elixir HTTP entry.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [L]
+</IfModule>

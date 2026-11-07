@@ -1,0 +1,15 @@
+/_build/
+/cover/
+/deps/
+/.fetch
+erl_crash.dump
+*.ez
+/laravex-*.tar
+/tmp/
+.env
+/node_modules
+/public/hot
+/public/storage
+/storage/*.key
+/vendor
+.DS_Store
