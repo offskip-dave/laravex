@@ -51,6 +51,46 @@ defmodule Laravex.Http.Request do
 
   def all(%__MODULE__{params: params}), do: params
 
+  def only(%__MODULE__{params: params}, keys) when is_list(keys) do
+    keys = Enum.map(keys, &to_string/1)
+
+    params
+    |> Enum.filter(fn {k, _} -> to_string(k) in keys end)
+    |> Map.new(fn {k, v} -> {to_string(k), v} end)
+  end
+
+  def except(%__MODULE__{params: params}, keys) when is_list(keys) do
+    keys = Enum.map(keys, &to_string/1)
+
+    params
+    |> Enum.reject(fn {k, _} -> to_string(k) in keys end)
+    |> Map.new(fn {k, v} -> {to_string(k), v} end)
+  end
+
+  def has?(%__MODULE__{} = request, key) do
+    k = to_string(key)
+    Map.has_key?(request.params, k) or Map.has_key?(request.params, key)
+  end
+
+  def missing?(%__MODULE__{} = request, key), do: not has?(request, key)
+
+  def filled?(%__MODULE__{} = request, key) do
+    case input(request, key) do
+      nil -> false
+      "" -> false
+      [] -> false
+      %{} = m -> map_size(m) > 0
+      _ -> true
+    end
+  end
+
+  def boolean(%__MODULE__{} = request, key) do
+    case input(request, key) do
+      v when v in [true, 1, "1", "true", "on", "yes"] -> true
+      _ -> false
+    end
+  end
+
   def header(%__MODULE__{headers: headers}, key, default \\ nil) do
     Map.get(headers, String.downcase(to_string(key)), default)
   end

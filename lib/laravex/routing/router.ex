@@ -11,8 +11,8 @@ defmodule Laravex.Routing.Router do
       if :ets.whereis(t) != :undefined, do: :ets.delete(t)
     end
 
-    :ets.new(@table, [:named_table, :public, :ordered_set, read_concurrency: true])
-    :ets.new(@meta, [:named_table, :public, :set, read_concurrency: true])
+    _ = :ets.new(@table, [:named_table, :public, :ordered_set, read_concurrency: true])
+    _ = :ets.new(@meta, [:named_table, :public, :set, read_concurrency: true])
     :ets.insert(@meta, {:group_stack, []})
     :ets.insert(@meta, {:named, %{}})
     :ok

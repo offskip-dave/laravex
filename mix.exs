@@ -10,7 +10,11 @@ defmodule Laravex.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       test_paths: ["tests"],
-      test_pattern: "*_test.exs"
+      test_pattern: "*_test.exs",
+      dialyzer: [
+        plt_add_apps: [:mix, :ex_unit, :logger, :crypto, :inets, :ssl],
+        flags: [:error_handling, :unmatched_returns]
+      ]
     ]
   end
 
@@ -25,7 +29,9 @@ defmodule Laravex.MixProject do
   defp elixirc_paths(_), do: ["lib", "app", "bootstrap", "routes", "database"]
 
   defp deps do
-    []
+    [
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+    ]
   end
 end
 

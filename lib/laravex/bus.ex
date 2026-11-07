@@ -253,7 +253,7 @@ defmodule Laravex.Bus do
   defp invoke_mfa(%{"mod" => mod, "fun" => fun, "args" => args}, batch) do
     mod = String.to_atom(mod)
     fun = String.to_atom(fun)
-    Code.ensure_loaded(mod)
+    _ = Code.ensure_loaded(mod)
     apply(mod, fun, [batch | List.wrap(args)])
   rescue
     e -> Laravex.Log.Logger.error("Bus batch callback failed: #{Exception.message(e)}")

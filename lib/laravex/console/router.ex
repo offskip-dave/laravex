@@ -5,7 +5,7 @@ defmodule Laravex.Console.Router do
 
   def reset do
     if :ets.whereis(@table) != :undefined, do: :ets.delete(@table)
-    :ets.new(@table, [:named_table, :public, :set])
+    _ = :ets.new(@table, [:named_table, :public, :set])
     :ok
   end
 
@@ -41,12 +41,13 @@ defmodule Laravex.Console.Router do
   defp ensure do
     if :ets.whereis(@table) == :undefined do
       try do
-        :ets.new(@table, [:named_table, :public, :set])
+        _ = :ets.new(@table, [:named_table, :public, :set])
+        :ok
       rescue
         ArgumentError -> :ok
       end
+    else
+      :ok
     end
-
-    :ok
   end
 end

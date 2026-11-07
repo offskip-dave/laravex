@@ -50,7 +50,7 @@ defmodule Laravex.Filesystem.Storage do
 
   def delete(path, disk \\ nil) do
     d = disk(disk)
-    File.rm(Path.join(d.root, path))
+    _ = File.rm(Path.join(d.root, path))
     :ok
   end
 
@@ -99,7 +99,7 @@ defmodule Laravex.Filesystem.Storage do
 
   def delete_directory(directory, disk \\ nil) do
     d = disk(disk)
-    File.rm_rf(Path.join(d.root, directory))
+    _ = File.rm_rf(Path.join(d.root, directory))
     :ok
   end
 
@@ -151,7 +151,7 @@ defmodule Laravex.Filesystem.Storage do
 
     Enum.each(links, fn {link, target} ->
       File.mkdir_p!(Path.dirname(link))
-      if File.exists?(link), do: File.rm_rf!(link)
+      _ = if File.exists?(link), do: File.rm_rf!(link)
       File.ln_s!(target, link)
     end)
 
@@ -164,7 +164,7 @@ defmodule Laravex.Filesystem.Storage do
 
   defp apply_visibility(full, "private") do
     # Best-effort local permission bit (ignored on some platforms / sandboxes)
-    File.chmod(full, 0o600)
+    _ = File.chmod(full, 0o600)
     :ok
   rescue
     _ -> :ok

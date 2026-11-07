@@ -25,6 +25,7 @@ defmodule Laravex.View do
     Process.put(:laravex_once_keys, MapSet.new())
 
     {contents, verbatim} = extract_verbatim(contents)
+    {contents, assigns} = apply_props(contents, assigns)
 
     contents
     |> apply_extends(assigns)
@@ -266,21 +267,131 @@ defmodule Laravex.View do
             find_view(base, "components/#{name}")
 
         if path do
-          File.read!(path)
-          |> then(fn html ->
-            html
-            |> String.replace("{{ $slot }}", slot)
-            |> String.replace("{{ slot }}", slot)
-            |> replace_foreach(component_assigns)
-            |> replace_error(component_assigns)
-            |> replace_directives(component_assigns)
-            |> replace_echoes(component_assigns)
-          end)
+          stack = Process.get(:laravex_component_stack, [])
+          Process.put(:laravex_component_stack, [assigns | stack])
+
+          try do
+            File.read!(path)
+            |> then(fn html ->
+              {html, component_assigns} = apply_props(html, component_assigns)
+              {html, component_assigns} = apply_aware(html, component_assigns)
+
+              html
+              |> String.replace("{{ $slot }}", slot)
+              |> String.replace("{{ slot }}", slot)
+              |> replace_foreach(component_assigns)
+              |> replace_error(component_assigns)
+              |> replace_directives(component_assigns)
+              |> replace_echoes(component_assigns)
+            end)
+          after
+            Process.put(:laravex_component_stack, stack)
+          end
         else
           "<!-- missing component #{name} -->"
         end
       end
     )
+  end
+
+  # @props(['type' => 'info', 'message']) — declare defaults / required keys.
+  defp apply_props(contents, assigns) do
+    case Regex.run(~r/@props\(\[(.*?)\]\)/s, contents) do
+      [full, inner] ->
+        defaults = parse_props_list(inner, assigns)
+
+        merged =
+          Enum.reduce(defaults, assigns, fn {k, default}, acc ->
+            cond do
+              Map.has_key?(acc, k) -> acc
+              Map.has_key?(acc, String.to_atom(k)) -> Map.put(acc, k, Map.get(acc, String.to_atom(k)))
+              true -> Map.put(acc, k, default)
+            end
+          end)
+
+        {String.replace(contents, full, "", global: false), merged}
+
+      _ ->
+        {contents, assigns}
+    end
+  end
+
+  # @aware(['user']) — pull missing keys from the parent component assigns.
+  defp apply_aware(contents, assigns) do
+    case Regex.run(~r/@aware\(\[(.*?)\]\)/s, contents) do
+      [full, inner] ->
+        keys =
+          Regex.scan(~r/['"](\w+)['"]/, inner)
+          |> Enum.map(fn [_, k] -> k end)
+
+        parent = Process.get(:laravex_component_stack, []) |> List.first() || %{}
+
+        merged =
+          Enum.reduce(keys, assigns, fn k, acc ->
+            cond do
+              Map.has_key?(acc, k) and not is_nil(Map.get(acc, k)) ->
+                acc
+
+              Map.has_key?(parent, k) ->
+                Map.put(acc, k, Map.get(parent, k))
+
+              Map.has_key?(parent, String.to_atom(k)) ->
+                Map.put(acc, k, Map.get(parent, String.to_atom(k)))
+
+              true ->
+                acc
+            end
+          end)
+
+        {String.replace(contents, full, "", global: false), merged}
+
+      _ ->
+        {contents, assigns}
+    end
+  end
+
+  defp parse_props_list(inner, assigns) when is_binary(inner) do
+    Regex.scan(
+      ~r/['"](\w+)['"](?:\s*=>\s*(?:['"]([^'"]*)['"]|(\$[a-zA-Z0-9_\.]+)|(true|false|null)|(-?\d+(?:\.\d+)?)))?/,
+      inner
+    )
+    |> Enum.map(fn
+      [_, k] ->
+        {k, nil}
+
+      [_, k, str, "", "", ""] ->
+        {k, str}
+
+      [_, k, "", var, "", ""] ->
+        key = String.trim_leading(var, "$")
+        {k, get_in_assign(assigns, key)}
+
+      [_, k, "", "", "true", ""] ->
+        {k, true}
+
+      [_, k, "", "", "false", ""] ->
+        {k, false}
+
+      [_, k, "", "", "null", ""] ->
+        {k, nil}
+
+      [_, k, "", "", "", num] ->
+        {k,
+         case Integer.parse(num) do
+           {i, ""} ->
+             i
+
+           _ ->
+             case Float.parse(num) do
+               {f, ""} -> f
+               _ -> num
+             end
+         end}
+
+      [_, k | _] ->
+        {k, nil}
+    end)
+    |> Map.new()
   end
 
   defp parse_attrs(nil, _), do: %{}
@@ -413,17 +524,70 @@ defmodule Laravex.View do
   end
 
   defp replace_includes(contents, assigns) do
-    Regex.replace(~r/@include\(['"]([^'"]+)['"](?:,\s*(\[.*?\]))?\)/, contents, fn _, name, attrs_src ->
-      base = Laravex.Foundation.Application.base_path()
-      path = find_view(base, name)
+    contents
+    |> replace_include_if(assigns)
+    |> replace_include_when(assigns)
+    |> replace_include_unless(assigns)
+    |> replace_include_plain(assigns)
+  end
 
-      if path do
+  defp replace_include_plain(contents, assigns) do
+    Regex.replace(~r/@include\(['"]([^'"]+)['"](?:,\s*(\[.*?\]))?\)/, contents, fn _, name, attrs_src ->
+      render_include(name, attrs_src, assigns, missing: :comment)
+    end)
+  end
+
+  # @includeIf('view') — include only when the view file exists.
+  defp replace_include_if(contents, assigns) do
+    Regex.replace(
+      ~r/@includeIf\(['"]([^'"]+)['"](?:,\s*(\[.*?\]))?\)/,
+      contents,
+      fn _, name, attrs_src ->
+        render_include(name, attrs_src, assigns, missing: :empty)
+      end
+    )
+  end
+
+  # @includeWhen($cond, 'view') / @includeUnless($cond, 'view')
+  defp replace_include_when(contents, assigns) do
+    Regex.replace(
+      ~r/@includeWhen\(\s*(.+?)\s*,\s*['"]([^'"]+)['"](?:,\s*(\[.*?\]))?\)/,
+      contents,
+      fn _, expr, name, attrs_src ->
+        if truthy?(eval_expr(expr, assigns)),
+          do: render_include(name, attrs_src, assigns, missing: :comment),
+          else: ""
+      end
+    )
+  end
+
+  defp replace_include_unless(contents, assigns) do
+    Regex.replace(
+      ~r/@includeUnless\(\s*(.+?)\s*,\s*['"]([^'"]+)['"](?:,\s*(\[.*?\]))?\)/,
+      contents,
+      fn _, expr, name, attrs_src ->
+        if truthy?(eval_expr(expr, assigns)),
+          do: "",
+          else: render_include(name, attrs_src, assigns, missing: :comment)
+      end
+    )
+  end
+
+  defp render_include(name, attrs_src, assigns, opts) do
+    base = Laravex.Foundation.Application.base_path()
+    path = find_view(base, name)
+
+    cond do
+      path ->
         File.read!(path)
         |> render_string(Map.merge(assigns, parse_attrs(attrs_src, assigns)))
-      else
+
+      Keyword.get(opts, :missing) == :empty ->
+        ""
+
+      true ->
         "<!-- missing include #{name} -->"
-      end
-    end)
+    end
   end
 
   defp replace_old(contents, assigns) do
@@ -594,6 +758,22 @@ defmodule Laravex.View do
         end
       )
     end)
+    |> then(fn html ->
+      Regex.replace(
+        ~r/@cannot\(['"]([^'"]+)['"](?:,\s*\$?(\w+))?\)(.*?)@endcannot/s,
+        html,
+        fn _, ability, resource_key, body ->
+          resource =
+            if resource_key in [nil, ""] do
+              nil
+            else
+              get_in_assign(assigns, resource_key)
+            end
+
+          if user && Laravex.Auth.Gate.allows?(user, ability, resource), do: "", else: body
+        end
+      )
+    end)
   end
 
   defp replace_error(contents, assigns) do
@@ -630,22 +810,22 @@ defmodule Laravex.View do
       Regex.split(~r/@(elseif\([^)]+\)|else)/, body, include_captures: true, trim: false)
 
     # segments: [before_elseif_or_else, capture, after, capture, after, ...]
-    branches = [{first_expr, Enum.at(segments, 0) || ""}]
+    initial = [{first_expr, Enum.at(segments, 0) || ""}]
 
     branches =
       segments
       |> Enum.drop(1)
       |> Enum.chunk_every(2)
-      |> Enum.reduce(branches, fn
-        ["elseif(" <> rest, content] ->
+      |> Enum.reduce(initial, fn
+        ["elseif(" <> rest, content], acc ->
           expr = String.trim_trailing(rest, ")")
-          branches ++ [{expr, content}]
+          acc ++ [{expr, content}]
 
-        ["else", content] ->
-          branches ++ [{:else, content}]
+        ["else", content], acc ->
+          acc ++ [{:else, content}]
 
-        _ ->
-          branches
+        _, acc ->
+          acc
       end)
 
     Enum.find_value(branches, "", fn

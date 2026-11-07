@@ -146,13 +146,14 @@ defmodule Laravex.Queue.Worker do
   defp ensure_deferred do
     if :ets.whereis(@deferred_table) == :undefined do
       try do
-        :ets.new(@deferred_table, [:named_table, :public, :set])
+        _ = :ets.new(@deferred_table, [:named_table, :public, :set])
+        :ok
       rescue
         ArgumentError -> :ok
       end
+    else
+      :ok
     end
-
-    :ok
   end
 
   defp do_work(once) do

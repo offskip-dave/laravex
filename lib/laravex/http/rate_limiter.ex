@@ -10,13 +10,14 @@ defmodule Laravex.Http.RateLimiter do
   def ensure do
     if :ets.whereis(@table) == :undefined do
       try do
-        :ets.new(@table, [:named_table, :public, :set])
+        _ = :ets.new(@table, [:named_table, :public, :set])
+        :ok
       rescue
         ArgumentError -> :ok
       end
+    else
+      :ok
     end
-
-    :ok
   end
 
   def for(name, fun) when is_function(fun, 0) or is_function(fun, 1) do

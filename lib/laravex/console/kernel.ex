@@ -67,8 +67,8 @@ defmodule Laravex.Console.Kernel do
   }
 
   def main(argv) do
-    Application.ensure_all_started(:laravex)
-    Laravex.Foundation.Server.boot!()
+    _ = Application.ensure_all_started(:laravex)
+    _ = Laravex.Foundation.Server.boot!()
 
     case argv do
       [] ->
@@ -131,7 +131,11 @@ defmodule Laravex.Console.Kernel do
     |> Enum.each(fn %{migration: m, status: s} -> IO.puts("#{String.pad_trailing(s, 10)} #{m}") end)
   end
 
-  def cmd_seed(_), do: (Database.Seeders.DatabaseSeeder.run(); IO.puts("Database seeded."); :ok)
+  def cmd_seed(_) do
+    _ = Database.Seeders.DatabaseSeeder.run()
+    IO.puts("Database seeded.")
+    :ok
+  end
 
   def cmd_routes(_) do
     Laravex.Routing.Router.routes()
@@ -154,19 +158,20 @@ defmodule Laravex.Console.Kernel do
     Laravex.Routing.RouteCache.clear!()
     Laravex.Routing.Router.reset()
 
-    case Laravex.Foundation.Application.instance() do
-      %{base_path: base} = instance ->
-        app = %Laravex.Foundation.Application{
-          base_path: base,
-          web_routes: Path.join(base, "routes/web.ex"),
-          health: Map.get(instance, :health) || "/up"
-        }
+    _ =
+      case Laravex.Foundation.Application.instance() do
+        %{base_path: base} = instance ->
+          app = %Laravex.Foundation.Application{
+            base_path: base,
+            web_routes: Path.join(base, "routes/web.ex"),
+            health: Map.get(instance, :health) || "/up"
+          }
 
-        Laravex.Foundation.Application.register_http_routes(app)
+          Laravex.Foundation.Application.register_http_routes(app)
 
-      _ ->
-        Laravex.Foundation.Server.boot!()
-    end
+        _ ->
+          Laravex.Foundation.Server.boot!()
+      end
 
     Laravex.Routing.RouteCache.cache!()
     IO.puts("Routes cached successfully.")

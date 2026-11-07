@@ -448,6 +448,90 @@ defmodule Laravex.Validation do
           do: [],
           else: ["The #{field} field must be #{len} digits."]
 
+      "digits_between:" <> rest ->
+        case String.split(rest, ",") do
+          [a, b] ->
+            min = String.to_integer(String.trim(a))
+            max = String.to_integer(String.trim(b))
+
+            if is_binary(value) and Regex.match?(~r/^\d+$/, value) and
+                 String.length(value) >= min and String.length(value) <= max,
+               do: [],
+               else: ["The #{field} field must be between #{min} and #{max} digits."]
+
+          _ ->
+            []
+        end
+
+      "accepted" ->
+        if value in [true, 1, "1", "true", "yes", "on"],
+          do: [],
+          else: ["The #{field} must be accepted."]
+
+      "declined" ->
+        if value in [false, 0, "0", "false", "no", "off"],
+          do: [],
+          else: ["The #{field} must be declined."]
+
+      "alpha" ->
+        if is_nil(value) or blank?(value) or (is_binary(value) and Regex.match?(~r/^\p{L}+$/u, value)),
+          do: [],
+          else: ["The #{field} field must only contain letters."]
+
+      "alpha_num" ->
+        if is_nil(value) or blank?(value) or
+             (is_binary(value) and Regex.match?(~r/^[\p{L}0-9]+$/u, value)),
+          do: [],
+          else: ["The #{field} field must only contain letters and numbers."]
+
+      "alpha_dash" ->
+        if is_nil(value) or blank?(value) or
+             (is_binary(value) and Regex.match?(~r/^[\p{L}0-9_-]+$/u, value)),
+          do: [],
+          else: ["The #{field} field must only contain letters, numbers, dashes and underscores."]
+
+      "different:" <> other_field ->
+        other = Map.get(data, other_field) || Map.get(data, String.to_atom(other_field))
+
+        if to_string(value || "") != to_string(other || ""),
+          do: [],
+          else: ["The #{field} and #{other_field} must be different."]
+
+      "not_in:" <> list ->
+        denied = String.split(list, ",")
+
+        if is_nil(value) or to_string(value) not in denied,
+          do: [],
+          else: ["The selected #{field} is invalid."]
+
+      "gt:" <> other ->
+        compare_numeric_rule(field, value, data, String.trim(other), :gt)
+
+      "gte:" <> other ->
+        compare_numeric_rule(field, value, data, String.trim(other), :gte)
+
+      "lt:" <> other ->
+        compare_numeric_rule(field, value, data, String.trim(other), :lt)
+
+      "lte:" <> other ->
+        compare_numeric_rule(field, value, data, String.trim(other), :lte)
+
+      "starts_with:" <> list ->
+        prefixes = String.split(list, ",")
+
+        if is_nil(value) or blank?(value) or
+             Enum.any?(prefixes, &String.starts_with?(to_string(value), &1)),
+           do: [],
+           else: ["The #{field} field must start with one of the following: #{list}."]
+
+      "ends_with:" <> list ->
+        suffixes = String.split(list, ",")
+
+        if is_nil(value) or blank?(value) or
+             Enum.any?(suffixes, &String.ends_with?(to_string(value), &1)),
+           do: [],
+           else: ["The #{field} field must end with one of the following: #{list}."]
+
       "size:" <> n ->
         size = String.to_integer(n)
 
@@ -459,6 +543,52 @@ defmodule Laravex.Validation do
 
       other ->
         custom_rule(field, value, other)
+    end
+  end
+
+  defp compare_numeric_rule(field, value, data, other, op) do
+    if is_nil(value) or blank?(value) do
+      []
+    else
+      other_val =
+        cond do
+          field_present?(data, other) ->
+            Map.get(data, other) || Map.get(data, String.to_atom(other))
+
+          match?({_, ""}, Float.parse(other)) or match?({_, ""}, Integer.parse(other)) ->
+            other
+
+          true ->
+            Map.get(data, other) || Map.get(data, String.to_atom(other)) || other
+        end
+
+      cond do
+        not (numeric?(value) and numeric?(other_val)) ->
+          []
+
+        op == :gt and to_number(value) > to_number(other_val) ->
+          []
+
+        op == :gte and to_number(value) >= to_number(other_val) ->
+          []
+
+        op == :lt and to_number(value) < to_number(other_val) ->
+          []
+
+        op == :lte and to_number(value) <= to_number(other_val) ->
+          []
+
+        true ->
+          label =
+            case op do
+              :gt -> "greater than"
+              :gte -> "greater than or equal to"
+              :lt -> "less than"
+              :lte -> "less than or equal to"
+            end
+
+          ["The #{field} field must be #{label} #{other}."]
+      end
     end
   end
 

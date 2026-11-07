@@ -151,7 +151,11 @@ defmodule Laravex.Http.Client do
   end
 
   defp normalize_stub(body) when is_map(body) or is_list(body) do
-    %{status: 200, headers: %{"content-type" => "application/json"}, body: Laravex.Support.JSON.encode!(body)}
+    %{
+      status: 200,
+      headers: %{"content-type" => "application/json"},
+      body: Laravex.Support.JSON.encode!(body)
+    }
   end
 
   defp normalize_stub(body) when is_binary(body), do: %{status: 200, headers: %{}, body: body}
@@ -172,28 +176,28 @@ defmodule Laravex.Http.Client do
 
   defp real_request(method, url, headers, body, timeout) do
     ensure_apps!()
-    http_method = method |> Atom.to_string() |> String.upcase() |> String.to_charlist()
     url_chars = String.to_charlist(url)
+    headers_c = Enum.map(headers, fn {k, v} -> {to_c(k), to_c(v)} end)
 
     request =
       case method do
-        m when m in [:get, :head, :delete] ->
-          {url_chars, headers}
+        m when m in [:get, :head, :delete, :options, :trace] ->
+          {url_chars, headers_c}
 
         _ ->
           content_type =
-            headers
-            |> Enum.find_value(fn {k, v} ->
-              if String.downcase(to_string(k)) == "content-type", do: to_c(v)
+            Enum.find_value(headers_c, fn {k, v} ->
+              if String.downcase(List.to_string(k)) == "content-type", do: v
             end) || ~c"application/json"
 
-          {url_chars, headers, content_type, body}
+          body_bin = IO.iodata_to_binary(body)
+          {url_chars, headers_c, content_type, body_bin}
       end
 
     http_opts = [{:timeout, timeout}, {:connect_timeout, timeout}]
     opts_httpc = [{:body_format, :binary}]
 
-    case :httpc.request(http_method, request, http_opts, opts_httpc) do
+    case :httpc.request(method, request, http_opts, opts_httpc) do
       {:ok, {{_http, status, _reason}, resp_headers, resp_body}} ->
         %{
           status: status,

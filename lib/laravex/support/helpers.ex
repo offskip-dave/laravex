@@ -35,6 +35,8 @@ defmodule Laravex.Support.Helpers do
 
   def now, do: DateTime.utc_now()
 
+  @spec abort(term()) :: no_return()
+  @spec abort(term(), term()) :: no_return()
   def abort(status, message \\ "Aborted") do
     raise Laravex.Http.HttpException, status: status, message: message
   end
@@ -58,6 +60,54 @@ defmodule Laravex.Support.Helpers do
         redirect(to)
     end
   end
+
+  @doc "Flash current request params as old input (Laravel `withInput`)."
+  def with_input(response) do
+    case Process.get(:laravex_request) do
+      nil ->
+        response
+
+      request ->
+        request = Laravex.Session.Store.put(request, "_old", request.params || %{})
+        Process.put(:laravex_request, request)
+        response
+    end
+  end
+
+  def redirect_with_input(to) when is_binary(to), do: to |> redirect() |> with_input()
+
+  @doc "Store intended URL for post-login redirect."
+  def intended(url) when is_binary(url) do
+    case Process.get(:laravex_request) do
+      nil ->
+        :ok
+
+      request ->
+        request = Laravex.Session.Store.put(request, "url.intended", url)
+        Process.put(:laravex_request, request)
+        :ok
+    end
+  end
+
+  @doc "Redirect to previously intended URL (or fallback)."
+  def redirect_intended(fallback \\ "/") do
+    case Process.get(:laravex_request) do
+      nil ->
+        redirect(fallback)
+
+      request ->
+        to = Map.get(request.session || %{}, "url.intended") || fallback
+        request = Laravex.Session.Store.put(request, "url.intended", nil)
+        Process.put(:laravex_request, request)
+        redirect(to)
+    end
+  end
+
+  def to_route(name, params \\ %{}) do
+    redirect(Laravex.Routing.Router.url(name, params))
+  end
+
+  def away(url) when is_binary(url), do: redirect(url)
 
   def back(fallback \\ "/") do
     case Process.get(:laravex_request) do
@@ -152,6 +202,7 @@ defmodule Laravex.Support.Helpers do
     Laravex.Translation.get(key, replace, locale)
   end
 
+  @spec dd(term()) :: no_return()
   def dd(value) do
     IO.puts(inspect(value, pretty: true, limit: :infinity))
     raise Laravex.Support.DumpException, value: value

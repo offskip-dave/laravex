@@ -75,10 +75,13 @@ defmodule Laravex.Eloquex.Factory do
 
     if :ets.whereis(table) == :undefined do
       try do
-        :ets.new(table, [:named_table, :public, :set])
+        _ = :ets.new(table, [:named_table, :public, :set])
+        :ok
       rescue
         ArgumentError -> :ok
       end
+    else
+      :ok
     end
 
     :ets.update_counter(table, key, {2, 1}, {key, 0})

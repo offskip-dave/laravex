@@ -4,6 +4,9 @@ defmodule Laravex.Database.Query do
   defstruct table: nil,
             wheres: [],
             bindings: [],
+            joins: [],
+            groups: [],
+            havings: [],
             order: nil,
             limit: nil,
             offset: nil,
@@ -12,6 +15,54 @@ defmodule Laravex.Database.Query do
   def table(name), do: %__MODULE__{table: name}
 
   def select(%__MODULE__{} = q, cols) when is_list(cols), do: %{q | columns: cols}
+
+  def select_raw(%__MODULE__{} = q, sql) when is_binary(sql) do
+    %{q | columns: q.columns ++ [sql]}
+  end
+
+  def group_by(%__MODULE__{} = q, columns) when is_list(columns) do
+    %{q | groups: q.groups ++ Enum.map(columns, &to_string/1)}
+  end
+
+  def group_by(%__MODULE__{} = q, column), do: group_by(q, [column])
+
+  def having(%__MODULE__{} = q, column, value) do
+    %{
+      q
+      | havings: q.havings ++ [{"#{column} = ?", value}],
+        bindings: q.bindings ++ [value]
+    }
+  end
+
+  def having(%__MODULE__{} = q, column, op, value) do
+    %{
+      q
+      | havings: q.havings ++ [{"#{column} #{op} ?", value}],
+        bindings: q.bindings ++ [value]
+    }
+  end
+
+  def having_raw(%__MODULE__{} = q, sql, bindings \\ []) when is_binary(sql) do
+    %{
+      q
+      | havings: q.havings ++ [{sql, :raw}],
+        bindings: q.bindings ++ List.wrap(bindings)
+    }
+  end
+
+  @doc "INNER JOIN `table` ON `left` `op` `right` (columns may be qualified)."
+  def join(%__MODULE__{} = q, table, left, right), do: join(q, table, left, "=", right)
+
+  def join(%__MODULE__{} = q, table, left, op, right) when is_binary(op) do
+    %{q | joins: q.joins ++ [{:inner, to_string(table), to_string(left), op, to_string(right)}]}
+  end
+
+  @doc "LEFT JOIN `table` ON `left` `op` `right`."
+  def left_join(%__MODULE__{} = q, table, left, right), do: left_join(q, table, left, "=", right)
+
+  def left_join(%__MODULE__{} = q, table, left, op, right) when is_binary(op) do
+    %{q | joins: q.joins ++ [{:left, to_string(table), to_string(left), op, to_string(right)}]}
+  end
 
   def where(%__MODULE__{} = q, column, value) do
     %{q | wheres: q.wheres ++ [{"#{column} = ?", value}], bindings: q.bindings ++ [value]}
@@ -67,6 +118,10 @@ defmodule Laravex.Database.Query do
 
   def where_raw(%__MODULE__{} = q, sql, bindings \\ []) when is_binary(sql) do
     %{q | wheres: q.wheres ++ [{sql, :raw}], bindings: q.bindings ++ List.wrap(bindings)}
+  end
+
+  def or_where_raw(%__MODULE__{} = q, sql, bindings \\ []) when is_binary(sql) do
+    %{q | wheres: q.wheres ++ [{:or, sql, :raw}], bindings: q.bindings ++ List.wrap(bindings)}
   end
 
   def exists?(%__MODULE__{} = q) do
@@ -153,7 +208,7 @@ defmodule Laravex.Database.Query do
   end
 
   def count(%__MODULE__{} = q) do
-    sql = "SELECT COUNT(*) AS aggregate FROM #{q.table}#{where_clause(q)}"
+    sql = "SELECT COUNT(*) AS aggregate FROM #{q.table}#{join_clause(q)}#{where_clause(q)}"
 
     case Laravex.Database.Connection.query(sql, q.bindings) do
       [%{"aggregate" => n}] -> n
@@ -225,7 +280,8 @@ defmodule Laravex.Database.Query do
   end
 
   defp aggregate(%__MODULE__{} = q, fn_name, column) do
-    sql = "SELECT #{fn_name}(#{column}) AS aggregate FROM #{q.table}#{where_clause(q)}"
+    sql =
+      "SELECT #{fn_name}(#{column}) AS aggregate FROM #{q.table}#{join_clause(q)}#{where_clause(q)}"
 
     case Laravex.Database.Connection.query(sql, q.bindings) do
       [%{"aggregate" => n}] -> n
@@ -237,10 +293,49 @@ defmodule Laravex.Database.Query do
     cols = Enum.join(q.columns, ", ")
 
     "SELECT #{cols} FROM #{q.table}" <>
+      join_clause(q) <>
       where_clause(q) <>
+      group_clause(q) <>
+      having_clause(q) <>
       if(q.order, do: " ORDER BY #{q.order}", else: "") <>
       if(q.limit, do: " LIMIT #{q.limit}", else: "") <>
       if(q.offset, do: " OFFSET #{q.offset}", else: "")
+  end
+
+  defp group_clause(%{groups: groups}) when is_list(groups) and groups != [],
+    do: " GROUP BY #{Enum.join(groups, ", ")}"
+
+  defp group_clause(_), do: ""
+
+  defp having_clause(%{havings: []}), do: ""
+  defp having_clause(%{havings: nil}), do: ""
+
+  defp having_clause(%{havings: havings}) do
+    sql =
+      Enum.map_join(havings, " AND ", fn
+        {fragment, _} -> fragment
+        fragment when is_binary(fragment) -> fragment
+      end)
+
+    " HAVING " <> sql
+  end
+
+  defp join_clause(%{joins: []}), do: ""
+  defp join_clause(%{joins: nil}), do: ""
+
+  defp join_clause(%{joins: joins}) do
+    Enum.map_join(joins, "", fn
+      {:inner, table, left, op, right} -> " INNER JOIN #{table} ON #{left} #{op} #{right}"
+      {:left, table, left, op, right} -> " LEFT JOIN #{table} ON #{left} #{op} #{right}"
+    end)
+  end
+
+  @doc "Return `{where_sql_without_keyword, bindings}` for embedding in subqueries."
+  def to_where_sql(%__MODULE__{wheres: []}), do: {"", []}
+
+  def to_where_sql(%__MODULE__{} = q) do
+    clause = where_clause(q) |> String.replace_prefix(" WHERE ", "")
+    {clause, q.bindings}
   end
 
   defp where_clause(%{wheres: []}), do: ""

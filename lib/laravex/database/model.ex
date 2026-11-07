@@ -47,6 +47,27 @@ defmodule Laravex.Database.Model do
         end
       end
 
+      def find_or_fail(id, opts \\ []) do
+        case find(id, opts) do
+          nil -> raise Laravex.Database.ModelNotFoundException, model: __MODULE__, id: id
+          model -> model
+        end
+      end
+
+      def first(opts \\ []) do
+        case query(opts) |> Laravex.Database.Query.first() do
+          nil -> nil
+          row -> from_row(row)
+        end
+      end
+
+      def first_or_fail(opts \\ []) do
+        case first(opts) do
+          nil -> raise Laravex.Database.ModelNotFoundException, model: __MODULE__, id: nil
+          model -> model
+        end
+      end
+
       def find_by_email(email) do
         case query() |> Laravex.Database.Query.where("email", email) |> Laravex.Database.Query.first() do
           nil -> nil
@@ -59,6 +80,60 @@ defmodule Laravex.Database.Model do
         |> Laravex.Database.Query.where(column, value)
         |> Laravex.Database.Query.get()
         |> Enum.map(&from_row/1)
+      end
+
+      def where_has(relation) when is_atom(relation) or is_binary(relation) do
+        Laravex.Database.Model.where_has(__MODULE__, query(), relation, nil)
+      end
+
+      def where_has(%Laravex.Database.Query{} = q, relation) do
+        Laravex.Database.Model.where_has(__MODULE__, q, relation, nil)
+      end
+
+      def where_has(relation, constraint)
+          when (is_atom(relation) or is_binary(relation)) and
+                 (is_function(constraint, 1) or is_nil(constraint)) do
+        Laravex.Database.Model.where_has(__MODULE__, query(), relation, constraint)
+      end
+
+      def where_has(%Laravex.Database.Query{} = q, relation, constraint) do
+        Laravex.Database.Model.where_has(__MODULE__, q, relation, constraint)
+      end
+
+      def or_where_has(relation) when is_atom(relation) or is_binary(relation) do
+        Laravex.Database.Model.or_where_has(__MODULE__, query(), relation, nil)
+      end
+
+      def or_where_has(%Laravex.Database.Query{} = q, relation) do
+        Laravex.Database.Model.or_where_has(__MODULE__, q, relation, nil)
+      end
+
+      def or_where_has(relation, constraint)
+          when (is_atom(relation) or is_binary(relation)) and
+                 (is_function(constraint, 1) or is_nil(constraint)) do
+        Laravex.Database.Model.or_where_has(__MODULE__, query(), relation, constraint)
+      end
+
+      def or_where_has(%Laravex.Database.Query{} = q, relation, constraint) do
+        Laravex.Database.Model.or_where_has(__MODULE__, q, relation, constraint)
+      end
+
+      def where_doesnt_have(relation) when is_atom(relation) or is_binary(relation) do
+        Laravex.Database.Model.where_doesnt_have(__MODULE__, query(), relation, nil)
+      end
+
+      def where_doesnt_have(%Laravex.Database.Query{} = q, relation) do
+        Laravex.Database.Model.where_doesnt_have(__MODULE__, q, relation, nil)
+      end
+
+      def where_doesnt_have(relation, constraint)
+          when (is_atom(relation) or is_binary(relation)) and
+                 (is_function(constraint, 1) or is_nil(constraint)) do
+        Laravex.Database.Model.where_doesnt_have(__MODULE__, query(), relation, constraint)
+      end
+
+      def where_doesnt_have(%Laravex.Database.Query{} = q, relation, constraint) do
+        Laravex.Database.Model.where_doesnt_have(__MODULE__, q, relation, constraint)
       end
 
       def with_trashed, do: all(with_trashed: true)
@@ -355,6 +430,90 @@ defmodule Laravex.Database.Model do
 
     Map.put(pager, :links, Laravex.Http.Paginator.simple_links(pager, path))
   end
+
+  @doc """
+  Constrain `q` to rows that have a related record matching optional `constraint`.
+
+      User.query() |> User.where_has(\"posts\")
+      User.query() |> User.where_has(\"posts\", fn q -> Query.where(q, \"published\", 1) end)
+  """
+  def where_has(owner_mod, %Laravex.Database.Query{} = q, relation, constraint \\ nil) do
+    {sql, bindings} = exists_sql(owner_mod, q.table, relation, constraint)
+    Laravex.Database.Query.where_raw(q, "EXISTS (#{sql})", bindings)
+  end
+
+  def or_where_has(owner_mod, %Laravex.Database.Query{} = q, relation, constraint \\ nil) do
+    {sql, bindings} = exists_sql(owner_mod, q.table, relation, constraint)
+    Laravex.Database.Query.or_where_raw(q, "EXISTS (#{sql})", bindings)
+  end
+
+  def where_doesnt_have(owner_mod, %Laravex.Database.Query{} = q, relation, constraint \\ nil) do
+    {sql, bindings} = exists_sql(owner_mod, q.table, relation, constraint)
+    Laravex.Database.Query.where_raw(q, "NOT EXISTS (#{sql})", bindings)
+  end
+
+  defp exists_sql(owner_mod, owner_table, relation, constraint) do
+    rel_def = relation_def(owner_mod, relation)
+
+    case rel_def do
+      {:has_many, _n, related, fk} ->
+        exists_has(owner_table, related, fk, constraint)
+
+      {:has_one, _n, related, fk} ->
+        exists_has(owner_table, related, fk, constraint)
+
+      {:belongs_to, _n, related, fk} ->
+        exists_belongs_to(owner_table, related, fk, constraint)
+
+      {:belongs_to_many, _n, related, pivot, fk, rk} ->
+        exists_belongs_to_many(owner_table, related, pivot, fk, rk, constraint)
+
+      _ ->
+        raise ArgumentError, "Unknown relation #{inspect(relation)} on #{inspect(owner_mod)}"
+    end
+  end
+
+  defp exists_has(owner_table, related, fk, constraint) do
+    related_table = related.table_name()
+    {extra, bindings} = constraint_where(related, constraint)
+    base = "#{related_table}.#{fk} = #{owner_table}.id"
+    sql = "SELECT 1 FROM #{related_table} WHERE #{base}#{extra_and(extra)}"
+    {sql, bindings}
+  end
+
+  defp exists_belongs_to(owner_table, related, fk, constraint) do
+    related_table = related.table_name()
+    {extra, bindings} = constraint_where(related, constraint)
+    base = "#{related_table}.id = #{owner_table}.#{fk}"
+    sql = "SELECT 1 FROM #{related_table} WHERE #{base}#{extra_and(extra)}"
+    {sql, bindings}
+  end
+
+  defp exists_belongs_to_many(owner_table, related, pivot, fk, rk, constraint) do
+    related_table = related.table_name()
+    {extra, bindings} = constraint_where(related, constraint)
+
+    base =
+      "#{pivot}.#{fk} = #{owner_table}.id AND #{related_table}.id = #{pivot}.#{rk}"
+
+    sql =
+      "SELECT 1 FROM #{pivot} INNER JOIN #{related_table} ON #{related_table}.id = #{pivot}.#{rk} WHERE #{base}#{extra_and(extra)}"
+
+    {sql, bindings}
+  end
+
+  defp constraint_where(related, nil) do
+    Laravex.Database.Query.to_where_sql(related.query())
+  end
+
+  defp constraint_where(related, fun) when is_function(fun, 1) do
+    related.query()
+    |> fun.()
+    |> Laravex.Database.Query.to_where_sql()
+  end
+
+  defp extra_and(""), do: ""
+  defp extra_and(sql) when is_binary(sql), do: " AND #{sql}"
 
   def with_relations(models, owner_mod, relations) do
     rels = List.wrap(relations)
@@ -663,8 +822,8 @@ defmodule Laravex.Database.Model do
     |> Laravex.Database.Query.update(%{attr => now, "updated_at" => now})
 
     touched = Map.put(model, String.to_atom(attr), now) |> Map.put(:updated_at, now)
-    sync_original(touched)
-    touch_parents(touched)
+    _ = sync_original(touched)
+    _ = touch_parents(touched)
     touched
   end
 

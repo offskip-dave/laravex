@@ -6,13 +6,14 @@ defmodule Laravex.View.Cache do
   def ensure do
     if :ets.whereis(@table) == :undefined do
       try do
-        :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
+        _ = :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
+        :ok
       rescue
         ArgumentError -> :ok
       end
+    else
+      :ok
     end
-
-    :ok
   end
 
   def warm(base_path \\ nil) do

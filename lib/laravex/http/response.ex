@@ -56,6 +56,16 @@ defmodule Laravex.Http.Response do
     new(status, "", [{"location", to}])
   end
 
+  def no_content, do: new(204, "")
+
+  def created(data \\ nil) do
+    case data do
+      nil -> new(201, "")
+      %{} = map -> json(map, 201)
+      other -> new(201, to_string(other), [{"content-type", "text/plain; charset=utf-8"}])
+    end
+  end
+
   @doc """
   File download response.
 

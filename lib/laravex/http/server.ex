@@ -94,7 +94,7 @@ defmodule Laravex.Http.Server do
     case recv_all(socket) do
       {:ok, data} ->
         response = handle_raw(data, peer: peer)
-        :gen_tcp.send(socket, Laravex.Http.Response.to_iodata(response))
+        _ = :gen_tcp.send(socket, Laravex.Http.Response.to_iodata(response))
         :gen_tcp.close(socket)
 
       {:error, _} ->

@@ -14,13 +14,14 @@ defmodule Laravex.Broadcasting.Channel do
   def ensure do
     if :ets.whereis(@table) == :undefined do
       try do
-        :ets.new(@table, [:named_table, :public, :ordered_set])
+        _ = :ets.new(@table, [:named_table, :public, :ordered_set])
+        :ok
       rescue
         ArgumentError -> :ok
       end
+    else
+      :ok
     end
-
-    :ok
   end
 
   def reset do

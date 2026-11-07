@@ -169,13 +169,14 @@ defmodule Laravex.Auth.Gate do
   def ensure do
     if :ets.whereis(@table) == :undefined do
       try do
-        :ets.new(@table, [:named_table, :public, :set])
+        _ = :ets.new(@table, [:named_table, :public, :set])
+        :ok
       rescue
         ArgumentError -> :ok
       end
+    else
+      :ok
     end
-
-    :ok
   end
 
   def define(ability, fun) when is_atom(ability) or is_binary(ability) do
@@ -229,10 +230,13 @@ defmodule Laravex.Auth.Token do
   def ensure do
     if :ets.whereis(@table) == :undefined do
       try do
-        :ets.new(@table, [:named_table, :public, :set])
+        _ = :ets.new(@table, [:named_table, :public, :set])
+        :ok
       rescue
         ArgumentError -> :ok
       end
+    else
+      :ok
     end
 
     ensure_table()
@@ -336,9 +340,9 @@ defmodule Laravex.Auth.Token do
         {hash, %{expires_at: exp}} -> if expired?(exp), do: :ets.delete(@table, hash)
         _ -> :ok
       end)
+    else
+      :ok
     end
-
-    :ok
   end
 
   defp lookup_token(hash) do
@@ -432,12 +436,8 @@ defmodule Laravex.Auth.Token do
 
   def can?(abilities, ability) do
     ability = to_string(ability)
-
-    case normalize_abilities(abilities) do
-      ["*"] -> true
-      list when is_list(list) -> ability in list or "*" in list
-      _ -> false
-    end
+    list = normalize_abilities(abilities)
+    ability in list or "*" in list
   end
 
   defp normalize_abilities(nil), do: ["*"]

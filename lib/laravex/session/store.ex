@@ -10,13 +10,14 @@ defmodule Laravex.Session.Store do
   def ensure do
     if :ets.whereis(@table) == :undefined do
       try do
-        :ets.new(@table, [:named_table, :public, :set])
+        _ = :ets.new(@table, [:named_table, :public, :set])
+        :ok
       rescue
         ArgumentError -> :ok
       end
+    else
+      :ok
     end
-
-    :ok
   end
 
   def start(request) do
@@ -120,7 +121,7 @@ defmodule Laravex.Session.Store do
 
   def load(sid) do
     ensure()
-    ensure_driver!()
+    _ = ensure_driver!()
 
     case :ets.lookup(@table, sid) do
       [{^sid, session}] ->
@@ -190,7 +191,7 @@ defmodule Laravex.Session.Store do
       age = DateTime.diff(DateTime.utc_now(), mtime, :second)
 
       if age > lifetime_seconds() do
-        File.rm(path)
+        _ = File.rm(path)
         :error
       else
         {:ok, :erlang.binary_to_term(File.read!(path))}
@@ -204,7 +205,7 @@ defmodule Laravex.Session.Store do
 
   defp delete_file(sid) do
     path = Path.join(session_files_dir(), sid)
-    if File.exists?(path), do: File.rm(path)
+    _ = if File.exists?(path), do: File.rm(path)
     :ok
   end
 

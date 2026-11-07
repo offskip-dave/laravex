@@ -12,13 +12,14 @@ defmodule Laravex.Console.Schedule do
   def ensure do
     if :ets.whereis(@table) == :undefined do
       try do
-        :ets.new(@table, [:named_table, :public, :bag])
+        _ = :ets.new(@table, [:named_table, :public, :bag])
+        :ok
       rescue
         ArgumentError -> :ok
       end
+    else
+      :ok
     end
-
-    :ok
   end
 
   def reset do
