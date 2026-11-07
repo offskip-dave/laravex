@@ -121,6 +121,8 @@ defmodule Laravex.Support.Helpers do
 
   def collect(enumerable), do: Laravex.Support.Collection.new(enumerable)
 
+  def paginator_links(pager, path \\ "/"), do: Laravex.Http.Paginator.links(pager, path)
+
   def str_random(n \\ 16) do
     :crypto.strong_rand_bytes(n) |> Base.url_encode64(padding: false) |> binary_part(0, n)
   end

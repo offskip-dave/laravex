@@ -27,6 +27,7 @@ defmodule Laravex.View do
     |> replace_method()
     |> replace_push()
     |> replace_auth_directives(assigns)
+    |> replace_forelse(assigns)
     |> replace_foreach(assigns)
     |> replace_error(assigns)
     |> replace_session(assigns)
@@ -211,9 +212,16 @@ defmodule Laravex.View do
     old = Map.get(assigns, "old") || %{}
 
     Regex.replace(
-      ~r/\{\{\s*old\(['"]([^'"]+)['"](?:,\s*['"]([^'"]*)['"])?\)\s*\}\}/,
+      ~r/\{\{\s*old\(['"]([^'"]+)['"](?:,\s*(?:['"]([^'"]*)['"]|\$?(\w+)))?\)\s*\}\}/,
       contents,
-      fn _, key, default ->
+      fn _, key, default_lit, default_var ->
+        default =
+          cond do
+            is_binary(default_lit) and default_lit != "" -> default_lit
+            is_binary(default_var) and default_var != "" -> get_in_assign(assigns, default_var)
+            true -> ""
+          end
+
         value = Map.get(old, key) || Map.get(old, String.to_atom(key)) || default || ""
         value |> to_string() |> html_escape()
       end
@@ -246,6 +254,27 @@ defmodule Laravex.View do
     Regex.replace(~r/@stack\(['"]([^'"]+)['"]\)/, contents, fn _, name ->
       stacks |> Map.get(name, []) |> Enum.join("\n")
     end)
+  end
+
+  defp replace_forelse(contents, assigns) do
+    Regex.replace(
+      ~r/@forelse\s*\(\s*\$?(\w+)\s+as\s+\$?(\w+)\s*\)(.*?)@empty(.*?)@endforelse/s,
+      contents,
+      fn _, list_key, item_key, body, empty ->
+        list = get_in_assign(assigns, list_key) || []
+
+        case List.wrap(list) do
+          [] ->
+            empty
+
+          items ->
+            Enum.map_join(items, fn item ->
+              item_assigns = Map.put(assigns, item_key, item)
+              body |> replace_echoes(item_assigns) |> replace_directives(item_assigns)
+            end)
+        end
+      end
+    )
   end
 
   defp replace_foreach(contents, assigns) do

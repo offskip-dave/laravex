@@ -8,14 +8,134 @@ defmodule Laravex.Support.Collection do
   def count(%__MODULE__{items: items}), do: length(items)
   def first(%__MODULE__{items: [h | _]}), do: h
   def first(%__MODULE__{items: []}), do: nil
+  def last(%__MODULE__{items: []}), do: nil
+  def last(%__MODULE__{items: items}), do: List.last(items)
+
   def map(%__MODULE__{items: items}, fun), do: new(Enum.map(items, fun))
   def filter(%__MODULE__{items: items}, fun), do: new(Enum.filter(items, fun))
+  def reject(%__MODULE__{items: items}, fun), do: new(Enum.reject(items, fun))
+  def each(%__MODULE__{items: items} = c, fun) do
+    Enum.each(items, fun)
+    c
+  end
+
+  def reduce(%__MODULE__{items: items}, acc, fun), do: Enum.reduce(items, acc, fun)
   def to_list(%__MODULE__{items: items}), do: items
-  def pluck(%__MODULE__{items: items}, key) when is_atom(key) do
-    new(Enum.map(items, fn
-      %{^key => v} -> v
-      map when is_map(map) -> Map.get(map, key) || Map.get(map, to_string(key))
+  def values(%__MODULE__{items: items}), do: new(Enum.map(items, fn {_k, v} -> v; v -> v end))
+  def is_empty?(%__MODULE__{items: []}), do: true
+  def is_empty?(%__MODULE__{}), do: false
+  def is_not_empty?(c), do: not is_empty?(c)
+
+  def pluck(%__MODULE__{items: items}, key) when is_atom(key) or is_binary(key) do
+    key_atom = if is_binary(key), do: String.to_atom(key), else: key
+    key_str = to_string(key)
+
+    new(
+      Enum.map(items, fn
+        %{^key_atom => v} -> v
+        map when is_map(map) -> Map.get(map, key_atom) || Map.get(map, key_str)
+        _ -> nil
+      end)
+    )
+  end
+
+  def where(%__MODULE__{items: items}, key, value) do
+    key_atom = if is_binary(key), do: String.to_atom(key), else: key
+    key_str = to_string(key)
+
+    new(
+      Enum.filter(items, fn
+        map when is_map(map) ->
+          Map.get(map, key_atom) == value or Map.get(map, key_str) == value
+
+        _ ->
+          false
+      end)
+    )
+  end
+
+  def where(%__MODULE__{items: items}, fun) when is_function(fun, 1) do
+    new(Enum.filter(items, fun))
+  end
+
+  def group_by(%__MODULE__{items: items}, key) when is_atom(key) or is_binary(key) do
+    key_atom = if is_binary(key), do: String.to_atom(key), else: key
+    key_str = to_string(key)
+
+    items
+    |> Enum.group_by(fn
+      map when is_map(map) -> Map.get(map, key_atom) || Map.get(map, key_str)
       _ -> nil
-    end))
+    end)
+    |> Map.new(fn {k, v} -> {k, new(v)} end)
+  end
+
+  def group_by(%__MODULE__{items: items}, fun) when is_function(fun, 1) do
+    items
+    |> Enum.group_by(fun)
+    |> Map.new(fn {k, v} -> {k, new(v)} end)
+  end
+
+  def key_by(%__MODULE__{items: items}, key) when is_atom(key) or is_binary(key) do
+    key_atom = if is_binary(key), do: String.to_atom(key), else: key
+    key_str = to_string(key)
+
+    Map.new(items, fn
+      map when is_map(map) ->
+        {(Map.get(map, key_atom) || Map.get(map, key_str)), map}
+
+      other ->
+        {nil, other}
+    end)
+  end
+
+  def sum(%__MODULE__{items: items}) do
+    Enum.reduce(items, 0, fn
+      n when is_number(n) -> n + 0
+      _ -> 0
+    end)
+  end
+
+  def sum(%__MODULE__{} = c, key) do
+    c |> pluck(key) |> sum()
+  end
+
+  def only(%__MODULE__{items: items}, keys) when is_list(keys) do
+    key_set = MapSet.new(Enum.map(keys, &to_string/1))
+
+    new(
+      Enum.map(items, fn
+        map when is_map(map) ->
+          map
+          |> Enum.filter(fn {k, _} -> MapSet.member?(key_set, to_string(k)) end)
+          |> Map.new()
+
+        other ->
+          other
+      end)
+    )
+  end
+
+  def except(%__MODULE__{items: items}, keys) when is_list(keys) do
+    key_set = MapSet.new(Enum.map(keys, &to_string/1))
+
+    new(
+      Enum.map(items, fn
+        map when is_map(map) ->
+          map
+          |> Enum.reject(fn {k, _} -> MapSet.member?(key_set, to_string(k)) end)
+          |> Map.new()
+
+        other ->
+          other
+      end)
+    )
+  end
+
+  def to_map(%__MODULE__{items: items}) do
+    case items do
+      [{_, _} | _] -> Map.new(items)
+      _ -> Enum.with_index(items) |> Map.new(fn {v, i} -> {i, v} end)
+    end
   end
 end

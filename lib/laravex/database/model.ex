@@ -366,5 +366,29 @@ defmodule Laravex.Database.Model do
   defp cast_one(:datetime, nil), do: nil
   defp cast_one(:datetime, %DateTime{} = v), do: DateTime.to_iso8601(v)
   defp cast_one(:datetime, v), do: v
+
+  defp cast_one(:boolean, v) when v in [true, 1, "1", "true", "on", "yes"], do: true
+  defp cast_one(:boolean, v) when v in [false, 0, "0", "false", "off", "no", nil], do: false
+  defp cast_one(:boolean, _), do: false
+
+  defp cast_one(:array, v) when is_list(v), do: v
+  defp cast_one(:array, v) when is_binary(v) do
+    case Laravex.Support.JSON.decode(v) do
+      {:ok, list} when is_list(list) -> list
+      _ -> []
+    end
+  end
+  defp cast_one(:array, nil), do: []
+  defp cast_one(:array, _), do: []
+
+  defp cast_one(:json, v) when is_map(v) or is_list(v), do: v
+  defp cast_one(:json, v) when is_binary(v) do
+    case Laravex.Support.JSON.decode(v) do
+      {:ok, decoded} -> decoded
+      _ -> v
+    end
+  end
+  defp cast_one(:json, nil), do: nil
+
   defp cast_one(_, v), do: v
 end

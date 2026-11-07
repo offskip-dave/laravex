@@ -41,6 +41,9 @@ mix compile
 mix test
 ```
 
+Password resets use `Laravex.Auth.Password` + `password_reset_tokens` (wired by `install:starter-kit`).
+
+
 ## Conventions
 
 - Bootstrap via `Bootstrap.App.build() |> Laravex.Foundation.Application.create/1`.

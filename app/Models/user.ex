@@ -13,6 +13,7 @@ defmodule App.Models.User do
   ]
 
   use Laravex.Database.Model, table: "users"
+  use Laravex.Notifications.Notifiable
 
   def fillable, do: ["name", "email", "password"]
   def hidden, do: ["password", "remember_token"]

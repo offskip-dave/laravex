@@ -21,6 +21,14 @@ defmodule Laravex.Database.Query do
     %{q | wheres: q.wheres ++ [{"#{column} #{op} ?", value}], bindings: q.bindings ++ [value]}
   end
 
+  def or_where(%__MODULE__{} = q, column, value) do
+    %{q | wheres: q.wheres ++ [{:or, "#{column} = ?", value}], bindings: q.bindings ++ [value]}
+  end
+
+  def or_where(%__MODULE__{} = q, column, op, value) do
+    %{q | wheres: q.wheres ++ [{:or, "#{column} #{op} ?", value}], bindings: q.bindings ++ [value]}
+  end
+
   def where_null(%__MODULE__{} = q, column) do
     %{q | wheres: q.wheres ++ [{"#{column} IS NULL", :skip}]}
   end
@@ -43,6 +51,24 @@ defmodule Laravex.Database.Query do
     end
   end
 
+  def where_between(%__MODULE__{} = q, column, low, high) do
+    %{
+      q
+      | wheres: q.wheres ++ [{"#{column} BETWEEN ? AND ?", :between}],
+        bindings: q.bindings ++ [low, high]
+    }
+  end
+
+  def where_column(%__MODULE__{} = q, first, second), do: where_column(q, first, "=", second)
+
+  def where_column(%__MODULE__{} = q, first, op, second) when is_binary(op) do
+    %{q | wheres: q.wheres ++ [{"#{first} #{op} #{second}", :skip}]}
+  end
+
+  def where_raw(%__MODULE__{} = q, sql, bindings \\ []) when is_binary(sql) do
+    %{q | wheres: q.wheres ++ [{sql, :raw}], bindings: q.bindings ++ List.wrap(bindings)}
+  end
+
   def exists?(%__MODULE__{} = q) do
     case q |> limit(1) |> get() do
       [] -> false
@@ -54,6 +80,8 @@ defmodule Laravex.Database.Query do
     %{q | order: "#{column} #{String.upcase(to_string(dir))}"}
   end
 
+  def order_by_desc(%__MODULE__{} = q, column), do: order_by(q, column, "desc")
+
   def limit(%__MODULE__{} = q, n), do: %{q | limit: n}
   def offset(%__MODULE__{} = q, n), do: %{q | offset: n}
 
@@ -64,6 +92,25 @@ defmodule Laravex.Database.Query do
   def first(%__MODULE__{} = q) do
     q |> limit(1) |> get() |> List.first()
   end
+
+  def value(%__MODULE__{} = q, column) do
+    case q |> select([column]) |> first() do
+      nil -> nil
+      row -> Map.get(row, to_string(column)) || Map.get(row, column)
+    end
+  end
+
+  def pluck(%__MODULE__{} = q, column) do
+    q
+    |> select([column])
+    |> get()
+    |> Enum.map(fn row -> Map.get(row, to_string(column)) || Map.get(row, column) end)
+  end
+
+  def max(%__MODULE__{} = q, column), do: aggregate(q, "MAX", column)
+  def min(%__MODULE__{} = q, column), do: aggregate(q, "MIN", column)
+  def sum(%__MODULE__{} = q, column), do: aggregate(q, "SUM", column)
+  def avg(%__MODULE__{} = q, column), do: aggregate(q, "AVG", column)
 
   def insert(table, attrs) when is_binary(table) and is_map(attrs) do
     cols = Map.keys(attrs) |> Enum.map(&to_string/1)
@@ -80,6 +127,10 @@ defmodule Laravex.Database.Query do
       [%{"id" => id}] -> id
       _ -> nil
     end
+  end
+
+  def insert_all(table, rows) when is_binary(table) and is_list(rows) do
+    Enum.map(rows, &insert(table, &1))
   end
 
   def update(%__MODULE__{} = q, attrs) when is_map(attrs) do
@@ -110,6 +161,15 @@ defmodule Laravex.Database.Query do
     end
   end
 
+  defp aggregate(%__MODULE__{} = q, fn_name, column) do
+    sql = "SELECT #{fn_name}(#{column}) AS aggregate FROM #{q.table}#{where_clause(q)}"
+
+    case Laravex.Database.Connection.query(sql, q.bindings) do
+      [%{"aggregate" => n}] -> n
+      _ -> nil
+    end
+  end
+
   defp to_sql(%__MODULE__{} = q) do
     cols = Enum.join(q.columns, ", ")
 
@@ -123,7 +183,18 @@ defmodule Laravex.Database.Query do
   defp where_clause(%{wheres: []}), do: ""
 
   defp where_clause(%{wheres: w}) do
-    " WHERE " <> Enum.map_join(w, " AND ", fn {sql, _} -> sql end)
+    {sql, _} =
+      Enum.reduce(w, {"", true}, fn
+        {:or, fragment, _}, {acc, first?} ->
+          joiner = if first?, do: "", else: " OR "
+          {acc <> joiner <> fragment, false}
+
+        {fragment, _}, {acc, first?} ->
+          joiner = if first?, do: "", else: " AND "
+          {acc <> joiner <> fragment, false}
+      end)
+
+    " WHERE " <> sql
   end
 end
 

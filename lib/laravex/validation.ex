@@ -179,6 +179,53 @@ defmodule Laravex.Validation do
             do: [],
             else: ["The #{field} field must be an array."]
 
+        "filled" ->
+          if blank?(value), do: ["The #{field} field must have a value."], else: []
+
+        "same:" <> other_field ->
+          other = Map.get(data, other_field) || Map.get(data, String.to_atom(other_field))
+
+          if to_string(value || "") == to_string(other || ""),
+            do: [],
+            else: ["The #{field} and #{other_field} must match."]
+
+        "between:" <> rest ->
+          case String.split(rest, ",") do
+            [a, b] ->
+              min = String.to_integer(String.trim(a))
+              max = String.to_integer(String.trim(b))
+
+              cond do
+                is_binary(value) and (String.length(value) < min or String.length(value) > max) ->
+                  ["The #{field} field must be between #{min} and #{max} characters."]
+
+                is_integer(value) and (value < min or value > max) ->
+                  ["The #{field} field must be between #{min} and #{max}."]
+
+                true ->
+                  []
+              end
+
+            _ ->
+              []
+          end
+
+        "digits:" <> n ->
+          len = String.to_integer(n)
+
+          if is_binary(value) and Regex.match?(~r/^\d+$/, value) and String.length(value) == len,
+            do: [],
+            else: ["The #{field} field must be #{len} digits."]
+
+        "size:" <> n ->
+          size = String.to_integer(n)
+
+          cond do
+            is_binary(value) and String.length(value) == size -> []
+            is_list(value) and length(value) == size -> []
+            true -> ["The #{field} field must be #{size}."]
+          end
+
         other ->
           custom_rule(field, value, other)
       end

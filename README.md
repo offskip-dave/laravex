@@ -34,11 +34,11 @@ mix test
 |---|---|
 | Foundation | Container, HTTP/router (params, groups, resources/apiResource), middleware (session/CSRF/bindings/auth/guest/can/throttle/signed), exceptions, logging |
 | Database | SQLite via `sqlite3` CLI, Schema/Blueprint, dynamic migrations, query builder, Eloquent (relations, pagination, soft deletes, scopes, dirty tracking) |
-| Auth web loop | Session, CSRF, flash, session guard, policies/gates, validation (unique/exists + redirect), hashing, Crypt, signed URLs, DB API tokens |
-| DX | `make:*`, migrate/fresh/wipe/seed, route:list, serve, tinker REPL, EventServiceProvider, `AGENTS.md` |
-| Services | Cache, database queue worker, mail (log/array), filesystem disks (`store`/`url`), `storage:link` |
-| HTTP | Static files, multipart uploads, JsonResource + paginated JSON, OTP `:json` |
-| Views | Blade-like `{{ }}`, `old()`, `@csrf`, `@method`, `@vite`, `@if`/`@else`/`@unless`, `@include`, `@foreach`, `@error`, `@session`, `@auth`/`@guest`/`@can`, `@component`/`@slot`, `@push`/`@stack`, layouts |
+| Auth web loop | Session, CSRF, flash, guard, policies/gates, password broker/reset, validation depth, Crypt, signed URLs, DB API tokens |
+| DX | `make:*`, migrate/fresh/wipe/seed, route:list, serve, tinker, EventServiceProvider, Collection helpers, `AGENTS.md` |
+| Services | Cache, queue, mail (views/from/fake), notifications (Notifiable), logging (levels/daily/placeholders), filesystem |
+| HTTP | Static files, multipart uploads, JsonResource + paginator links, OTP `:json` |
+| Views | Blade `{{ }}`, `old()`, `@csrf`/`@method`, `@if`/`@else`/`@unless`/`@forelse`, `@include`, `@foreach`, `@error`/`@session`, `@auth`/`@can`, components/stacks |
 | Async | Events/listeners, notifications, schedule (cron/`hourly`/`daily`), broadcasting bus |
 | Ecosystem | `install:api` (tokens), `install:broadcasting`, `install:starter-kit`, observability recorder |
 
