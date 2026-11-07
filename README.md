@@ -49,3 +49,20 @@ Mirrors `laravel/laravel` 13.x: `app/`, `bootstrap/`, `config/`, `database/`, `p
 ## Production HTTP
 
 Use a reverse proxy + Bandit (or another Elixir HTTP server) for production; keep `./artisan serve` for local development. See [docs/DEPLOY.md](docs/DEPLOY.md).
+
+## FAQ
+
+**What’s wrong with PHP?**  
+Nothing. Laravel on PHP is excellent. Laravex isn’t a rejection of PHP — it’s for teams that want Laravel’s application shape and DX on the BEAM (OTP, concurrency, supervision, long-lived processes).
+
+**Why not just use Phoenix?**  
+Phoenix is the right default for most Elixir web apps. Laravex exists for a different bet: keep the Laravel mental model (`app/`, `routes/`, `artisan`, Eloquent-shaped models, Blade, middleware groups) instead of adopting Phoenix contexts, `*_web`, and LiveView as the primary UX. If you want idiomatic Elixir/Phoenix, use Phoenix.
+
+**What’s the intention of Laravex?**  
+Port the Laravel 13 application skeleton plus a thin Illuminate-shaped runtime to Elixir — faithful layout and APIs, not a line-by-line clone of every package. Prefer extending `lib/laravex/` for framework behavior and `app/` for application code. Stay zero-Hex where possible (CLI DB adapters, RESP Redis, SMTP, S3 via `:httpc`).
+
+**Is it a drop-in Laravel replacement?**  
+No. APIs aim to feel familiar so Laravel muscle memory transfers, but this is Elixir: immutability, pattern matching, and OTP replace PHP’s request lifecycle and some Illuminate internals. Expect gaps; see `AGENTS.md` for what’s in and out of scope.
+
+**Who is this for?**  
+Laravel developers curious about Elixir who don’t want to relearn an entire web stack on day one, and Elixir developers who prefer Laravel’s request/controller/resource style over Phoenix’s conventions.
