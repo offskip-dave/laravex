@@ -168,6 +168,68 @@ defmodule Laravex.Support.Collection do
     )
   end
 
+  def take(%__MODULE__{items: items}, n) when is_integer(n) and n >= 0 do
+    new(Enum.take(items, n))
+  end
+
+  def skip(%__MODULE__{items: items}, n) when is_integer(n) and n >= 0 do
+    new(Enum.drop(items, n))
+  end
+
+  def reverse(%__MODULE__{items: items}), do: new(Enum.reverse(items))
+
+  def contains?(%__MODULE__{items: items}, fun) when is_function(fun, 1) do
+    Enum.any?(items, fun)
+  end
+
+  def contains?(%__MODULE__{items: items}, value) do
+    value in items
+  end
+
+  def contains?(%__MODULE__{} = c, key, value) do
+    c |> where(key, value) |> is_not_empty?()
+  end
+
+  def unique(%__MODULE__{items: items}), do: new(Enum.uniq(items))
+
+  def unique(%__MODULE__{items: items}, key) when is_atom(key) or is_binary(key) do
+    key_atom = if is_binary(key), do: String.to_atom(key), else: key
+    key_str = to_string(key)
+
+    new(
+      Enum.uniq_by(items, fn
+        map when is_map(map) -> Map.get(map, key_atom) || Map.get(map, key_str)
+        other -> other
+      end)
+    )
+  end
+
+  def unique(%__MODULE__{items: items}, fun) when is_function(fun, 1) do
+    new(Enum.uniq_by(items, fun))
+  end
+
+  def merge(%__MODULE__{items: a}, %__MODULE__{items: b}), do: new(a ++ b)
+  def merge(%__MODULE__{items: a}, enumerable), do: new(a ++ Enum.to_list(enumerable))
+
+  def concat(%__MODULE__{} = c, other), do: merge(c, other)
+
+  def implode(%__MODULE__{items: items}, glue \\ "") do
+    items
+    |> Enum.map(&to_string/1)
+    |> Enum.join(glue)
+  end
+
+  def when_cond(%__MODULE__{} = c, condition, fun) when is_function(fun, 1) do
+    if truthy?(condition), do: fun.(c), else: c
+  end
+
+  def unless_cond(%__MODULE__{} = c, condition, fun) when is_function(fun, 1) do
+    if truthy?(condition), do: c, else: fun.(c)
+  end
+
+  defp truthy?(v) when v in [false, nil, 0, "", "0"], do: false
+  defp truthy?(_), do: true
+
   def to_map(%__MODULE__{items: items}) do
     case items do
       [{_, _} | _] -> Map.new(items)

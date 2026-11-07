@@ -41,6 +41,54 @@ defmodule Laravex.Support.Helpers do
     raise Laravex.Http.HttpException, status: status, message: message
   end
 
+  def abort_if(condition, status, message \\ "Aborted") do
+    if truthy?(condition), do: abort(status, message)
+    :ok
+  end
+
+  def abort_unless(condition, status, message \\ "Aborted") do
+    if truthy?(condition), do: :ok, else: abort(status, message)
+  end
+
+  def blank?(value) do
+    cond do
+      is_nil(value) -> true
+      value == false -> true
+      value == "" -> true
+      is_list(value) and value == [] -> true
+      is_map(value) and map_size(value) == 0 -> true
+      is_binary(value) and String.trim(value) == "" -> true
+      true -> false
+    end
+  end
+
+  def filled?(value), do: not blank?(value)
+
+  def data_get(target, key, default \\ nil) do
+    Laravex.Support.Arr.get(as_map(target), key, default)
+  end
+
+  def data_set(target, key, value) do
+    Laravex.Support.Arr.set(as_map(target), key, value)
+  end
+
+  def value(v) when is_function(v, 0), do: v.()
+  def value(v), do: v
+
+  def value(v, fun) when is_function(fun, 1), do: fun.(v)
+
+  def tap(v, fun) when is_function(fun, 1) do
+    fun.(v)
+    v
+  end
+
+  defp as_map(%{__struct__: _} = struct), do: Map.from_struct(struct)
+  defp as_map(map) when is_map(map), do: map
+  defp as_map(other), do: %{"value" => other}
+
+  defp truthy?(v) when v in [false, nil, 0, "", "0"], do: false
+  defp truthy?(_), do: true
+
   def redirect(to) when is_binary(to) do
     Laravex.Http.Response.redirect(to)
   end

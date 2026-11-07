@@ -65,17 +65,25 @@ defmodule Laravex.Mail.Mailer do
     Enum.any?(sent(), fun)
   end
 
+  def assert_not_sent(fun) when is_function(fun, 1) do
+    not Enum.any?(sent(), fun)
+  end
+
   defp normalize(%{to: _} = m) do
     from = Laravex.Config.Repository.get("mail.from", %{})
     body = render_body(m)
+    raw = Map.new(m)
 
     Map.merge(
       %{
         from_address: Map.get(from, "address") || Map.get(from, :address),
         from_name: Map.get(from, "name") || Map.get(from, :name),
-        body: body
+        body: body,
+        cc: Map.get(raw, :cc) || Map.get(raw, "cc"),
+        bcc: Map.get(raw, :bcc) || Map.get(raw, "bcc"),
+        reply_to: Map.get(raw, :reply_to) || Map.get(raw, "reply_to") || Map.get(raw, :replyTo)
       },
-      Map.new(m)
+      raw
     )
   end
 
@@ -89,7 +97,10 @@ defmodule Laravex.Mail.Mailer do
           subject: apply(mod, :subject, []),
           body: if(function_exported?(mod, :content, 0), do: mod.content(), else: ""),
           view: if(function_exported?(mod, :view, 0), do: mod.view(), else: nil),
-          data: if(function_exported?(mod, :data, 0), do: mod.data(), else: %{})
+          data: if(function_exported?(mod, :data, 0), do: mod.data(), else: %{}),
+          cc: if(function_exported?(mod, :cc, 0), do: mod.cc(), else: nil),
+          bcc: if(function_exported?(mod, :bcc, 0), do: mod.bcc(), else: nil),
+          reply_to: if(function_exported?(mod, :reply_to, 0), do: mod.reply_to(), else: nil)
         }
       end
 

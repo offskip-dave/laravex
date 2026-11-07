@@ -103,14 +103,14 @@ defmodule Laravex.Http.Middleware.ThrottleRequests do
     limiter = Keyword.get(opts, :limiter, "default")
     key = "throttle:#{limiter}:#{ip}:#{request.method}:#{request.path}"
 
-    count = (Laravex.Cache.Manager.get(key) || 0) + 1
-    Laravex.Cache.Manager.put(key, count, decay * 60)
+    if Laravex.Http.RateLimiter.too_many_attempts?(key, max) do
+      retry = max(Laravex.Http.RateLimiter.available_in(key), decay * 60)
 
-    if count > max do
       {:halt,
        Laravex.Http.Response.json(%{message: "Too Many Attempts."}, 429)
-       |> Map.update!(:headers, fn h -> [{"retry-after", to_string(decay * 60)} | h] end)}
+       |> Map.update!(:headers, fn h -> [{"retry-after", to_string(retry)} | h] end)}
     else
+      _ = Laravex.Http.RateLimiter.hit(key, decay * 60)
       {:ok, request}
     end
   end

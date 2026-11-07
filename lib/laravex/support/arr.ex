@@ -85,6 +85,26 @@ defmodule Laravex.Support.Arr do
     get(map, key, :__missing__) != :__missing__
   end
 
+  @doc "Add key/value only if the key is missing."
+  def add(map, key, value) when is_map(map) do
+    if has?(map, key), do: map, else: set(map, key, value)
+  end
+
+  def prepend(list, value) when is_list(list), do: [value | list]
+
+  def prepend(map, key, value) when is_map(map) do
+    existing = get(map, key, [])
+    existing = if is_list(existing), do: existing, else: [existing]
+    set(map, key, [value | existing])
+  end
+
+  @doc "Expand dotted keys into a nested map (inverse of `dot/1`)."
+  def undot(map) when is_map(map) do
+    Enum.reduce(map, %{}, fn {k, v}, acc ->
+      set(acc, to_string(k), v)
+    end)
+  end
+
   def first(list) when is_list(list), do: List.first(list)
   def last(list) when is_list(list), do: List.last(list)
 

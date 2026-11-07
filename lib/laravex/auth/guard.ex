@@ -165,6 +165,8 @@ defmodule Laravex.Auth.Gate do
   @moduledoc "Gate + policy registry (Laravel Gate / Policy conventions)."
 
   @table :laravex_gates
+  @before_key :laravex_gate_before
+  @after_key :laravex_gate_after
 
   def ensure do
     if :ets.whereis(@table) == :undefined do
@@ -185,9 +187,56 @@ defmodule Laravex.Auth.Gate do
     :ok
   end
 
+  @doc "Register a global before callback. Return true/false to short-circuit, nil to continue."
+  def before(fun) when is_function(fun, 3) or is_function(fun, 2) do
+    callbacks = Process.get(@before_key, [])
+    Process.put(@before_key, callbacks ++ [fun])
+    :ok
+  end
+
+  @doc """
+  Register a global after callback `(user, ability, result, resource) -> result`.
+
+  Named `after_check/1` because Elixir reserves `after`.
+  """
+  def after_check(fun) when is_function(fun, 4) or is_function(fun, 3) do
+    callbacks = Process.get(@after_key, [])
+    Process.put(@after_key, callbacks ++ [fun])
+    :ok
+  end
+
   def allows?(user, ability, resource \\ nil) do
     ensure()
 
+    case run_before(user, ability, resource) do
+      :continue ->
+        result = check_ability(user, ability, resource)
+        run_after(user, ability, result, resource)
+
+      forced when is_boolean(forced) ->
+        run_after(user, ability, forced, resource)
+    end
+  end
+
+  def denies?(user, ability, resource \\ nil), do: not allows?(user, ability, resource)
+
+  def any?(user, abilities, resource \\ nil) when is_list(abilities) do
+    Enum.any?(abilities, &allows?(user, &1, resource))
+  end
+
+  def none?(user, abilities, resource \\ nil) when is_list(abilities) do
+    Enum.all?(abilities, &denies?(user, &1, resource))
+  end
+
+  def authorize(user, ability, resource \\ nil) do
+    if allows?(user, ability, resource) do
+      :ok
+    else
+      raise Laravex.Http.HttpException, status: 403, message: "This action is unauthorized."
+    end
+  end
+
+  defp check_ability(user, ability, resource) do
     case :ets.lookup(@table, to_string(ability)) do
       [{_, fun}] when is_function(fun, 2) ->
         truthy?(fun.(user, resource))
@@ -200,14 +249,42 @@ defmodule Laravex.Auth.Gate do
     end
   end
 
-  def denies?(user, ability, resource \\ nil), do: not allows?(user, ability, resource)
+  defp run_before(user, ability, resource) do
+    Enum.reduce_while(Process.get(@before_key, []), :continue, fn fun, _ ->
+      result =
+        cond do
+          is_function(fun, 3) -> fun.(user, ability, resource)
+          is_function(fun, 2) -> fun.(user, ability)
+          true -> nil
+        end
 
-  def authorize(user, ability, resource \\ nil) do
-    if allows?(user, ability, resource) do
-      :ok
-    else
-      raise Laravex.Http.HttpException, status: 403, message: "This action is unauthorized."
-    end
+      case result do
+        true -> {:halt, true}
+        false -> {:halt, false}
+        _ -> {:cont, :continue}
+      end
+    end)
+  end
+
+  defp run_after(user, ability, result, resource) do
+    Enum.reduce(Process.get(@after_key, []), result, fn fun, acc ->
+      cond do
+        is_function(fun, 4) ->
+          case fun.(user, ability, acc, resource) do
+            r when is_boolean(r) -> r
+            _ -> acc
+          end
+
+        is_function(fun, 3) ->
+          case fun.(user, ability, acc) do
+            r when is_boolean(r) -> r
+            _ -> acc
+          end
+
+        true ->
+          acc
+      end
+    end)
   end
 
   defp truthy?(true), do: true
