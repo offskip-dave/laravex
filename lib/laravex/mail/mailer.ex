@@ -69,6 +69,29 @@ defmodule Laravex.Mail.Mailer do
     not Enum.any?(sent(), fun)
   end
 
+  @doc "Attach a file path to a mailable map (Laravel `$mailable->attach`)."
+  def attach(%{} = message, path, opts \\ []) when is_binary(path) do
+    att = %{
+      path: path,
+      name: Keyword.get(opts, :as) || Keyword.get(opts, :name) || Path.basename(path),
+      mime: Keyword.get(opts, :mime) || Keyword.get(opts, :mime_type)
+    }
+
+    Map.update(message, :attachments, [att], fn list -> List.wrap(list) ++ [att] end)
+  end
+
+  @doc "Attach raw data as a named file (Laravel `$mailable->attachData`)."
+  def attach_data(%{} = message, data, name, opts \\ [])
+      when is_binary(data) and is_binary(name) do
+    att = %{
+      data: data,
+      name: name,
+      mime: Keyword.get(opts, :mime) || Keyword.get(opts, :mime_type)
+    }
+
+    Map.update(message, :attachments, [att], fn list -> List.wrap(list) ++ [att] end)
+  end
+
   defp normalize(%{to: _} = m) do
     from = Laravex.Config.Repository.get("mail.from", %{})
     body = render_body(m)
@@ -124,12 +147,29 @@ defmodule Laravex.Mail.Mailer do
           mime: Map.get(att, :mime) || Map.get(att, "mime") || Map.get(att, :mime_type)
         }
 
+      %{data: data} = att when is_binary(data) ->
+        %{
+          data: data,
+          name: Map.get(att, :name) || Map.get(att, "name") || "attachment",
+          mime: Map.get(att, :mime) || Map.get(att, "mime") || Map.get(att, :mime_type)
+        }
+
       path when is_binary(path) ->
         %{path: path, name: Path.basename(path), mime: nil}
 
       other when is_map(other) ->
-        path = Map.get(other, :path) || Map.get(other, "path")
-        %{path: path, name: Map.get(other, :name) || Map.get(other, "name"), mime: Map.get(other, :mime)}
+        cond do
+          is_binary(Map.get(other, :data) || Map.get(other, "data")) ->
+            %{
+              data: Map.get(other, :data) || Map.get(other, "data"),
+              name: Map.get(other, :name) || Map.get(other, "name") || "attachment",
+              mime: Map.get(other, :mime) || Map.get(other, "mime")
+            }
+
+          true ->
+            path = Map.get(other, :path) || Map.get(other, "path")
+            %{path: path, name: Map.get(other, :name) || Map.get(other, "name"), mime: Map.get(other, :mime)}
+        end
 
       _ ->
         nil

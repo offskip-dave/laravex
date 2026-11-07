@@ -246,6 +246,16 @@ defmodule Laravex.Auth.Gate do
     :ok
   end
 
+  @doc "Remove a defined ability (Laravel `Gate::forget`)."
+  def forget(ability) when is_atom(ability) or is_binary(ability) do
+    ensure()
+    :ets.delete(@table, to_string(ability))
+    :ok
+  end
+
+  @doc "Alias of `forget/1` (Laravel `Gate::undefine`)."
+  def undefine(ability), do: forget(ability)
+
   @doc "Register a global before callback. Return true/false to short-circuit, nil to continue."
   def before(fun) when is_function(fun, 3) or is_function(fun, 2) do
     callbacks = Process.get(@before_key, [])

@@ -125,6 +125,45 @@ defmodule Laravex.Support.Str do
     end
   end
 
+  @doc """
+  Extract a snippet around `phrase` (Laravel `Str::excerpt`).
+
+  Options: `:radius` (default 100), `:omission` (default `"..."`).
+  """
+  def excerpt(s, phrase \\ "", opts \\ []) do
+    s = to_string(s)
+    phrase = to_string(phrase)
+    radius = Keyword.get(opts, :radius, 100)
+    omission = Keyword.get(opts, :omission, "...")
+
+    cond do
+      phrase == "" ->
+        limit(s, radius, omission)
+
+      true ->
+        case find_index(String.downcase(s), String.downcase(phrase)) do
+          nil ->
+            ""
+
+          pos ->
+            len = String.length(phrase)
+            start = max(pos - radius, 0)
+            stop = min(pos + len + radius, String.length(s))
+            snippet = String.slice(s, start, stop - start)
+            left = if start > 0, do: omission, else: ""
+            right = if stop < String.length(s), do: omission, else: ""
+            left <> snippet <> right
+        end
+    end
+  end
+
+  defp find_index(haystack, needle) do
+    case String.split(haystack, needle, parts: 2) do
+      [left, _] -> String.length(left)
+      [_] -> nil
+    end
+  end
+
   def headline(s) do
     s
     |> to_string()

@@ -266,6 +266,56 @@ defmodule Laravex.Database.Query do
     %{q | wheres: q.wheres ++ [{"time(#{column}) = ?", time}], bindings: q.bindings ++ [time]}
   end
 
+  def or_where_date(%__MODULE__{} = q, column, value) do
+    date = normalize_sql_date(value)
+
+    %{
+      q
+      | wheres: q.wheres ++ [{:or, "date(#{column}) = ?", date}],
+        bindings: q.bindings ++ [date]
+    }
+  end
+
+  def or_where_year(%__MODULE__{} = q, column, year) do
+    y = to_string(year)
+
+    %{
+      q
+      | wheres: q.wheres ++ [{:or, "strftime('%Y', #{column}) = ?", y}],
+        bindings: q.bindings ++ [y]
+    }
+  end
+
+  def or_where_month(%__MODULE__{} = q, column, month) do
+    m = month |> to_string() |> String.pad_leading(2, "0")
+
+    %{
+      q
+      | wheres: q.wheres ++ [{:or, "strftime('%m', #{column}) = ?", m}],
+        bindings: q.bindings ++ [m]
+    }
+  end
+
+  def or_where_day(%__MODULE__{} = q, column, day) do
+    d = day |> to_string() |> String.pad_leading(2, "0")
+
+    %{
+      q
+      | wheres: q.wheres ++ [{:or, "strftime('%d', #{column}) = ?", d}],
+        bindings: q.bindings ++ [d]
+    }
+  end
+
+  def or_where_time(%__MODULE__{} = q, column, value) do
+    time = normalize_sql_time(value)
+
+    %{
+      q
+      | wheres: q.wheres ++ [{:or, "time(#{column}) = ?", time}],
+        bindings: q.bindings ++ [time]
+    }
+  end
+
   defp normalize_sql_date(%Date{} = d), do: Date.to_iso8601(d)
   defp normalize_sql_date(%DateTime{} = dt), do: DateTime.to_date(dt) |> Date.to_iso8601()
   defp normalize_sql_date(%NaiveDateTime{} = ndt), do: NaiveDateTime.to_date(ndt) |> Date.to_iso8601()

@@ -27,6 +27,18 @@ defmodule Laravex.Support.Collection do
   def last(%__MODULE__{items: []}), do: nil
   def last(%__MODULE__{items: items}), do: List.last(items)
 
+  @doc "Return the only item, or raise if empty/ambiguous (Laravel `sole()`)."
+  def sole(%__MODULE__{items: [only]}), do: only
+
+  def sole(%__MODULE__{items: []}) do
+    raise ArgumentError, "Collection is empty (expected exactly one item)."
+  end
+
+  def sole(%__MODULE__{items: items}) do
+    raise ArgumentError,
+          "Collection has #{length(items)} items (expected exactly one)."
+  end
+
   def map(%__MODULE__{items: items}, fun), do: new(Enum.map(items, fun))
   def filter(%__MODULE__{items: items}, fun), do: new(Enum.filter(items, fun))
   def reject(%__MODULE__{items: items}, fun), do: new(Enum.reject(items, fun))

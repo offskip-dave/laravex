@@ -193,6 +193,16 @@ defmodule Laravex.Http.Request do
     if missing?(request, key), do: fun.(request), else: request
   end
 
+  @doc "Call `fun` when the key is absent (inverse of `when_has`)."
+  def when_not_has(%__MODULE__{} = request, key, fun) when is_function(fun, 1) do
+    if has?(request, key), do: request, else: fun.(request)
+  end
+
+  @doc "Call `fun` when the key is blank/missing (inverse of `when_filled`)."
+  def when_not_filled(%__MODULE__{} = request, key, fun) when is_function(fun, 1) do
+    if filled?(request, key), do: request, else: fun.(request)
+  end
+
   @doc "Merge input into the request (Laravel `Request::merge`)."
   def merge(%__MODULE__{params: params} = request, values) when is_map(values) do
     %{request | params: Map.merge(params, stringify_keys(values))}

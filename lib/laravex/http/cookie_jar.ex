@@ -16,6 +16,16 @@ defmodule Laravex.Http.CookieJar do
 
   def queued, do: Process.get(@key, [])
 
+  @doc "Look up a queued cookie by name (Laravel `Cookie::queued`). Returns `{value, opts}` or nil."
+  def get(name) do
+    name = to_string(name)
+
+    Enum.find_value(queued(), fn
+      {^name, value, opts} -> {value, opts}
+      _ -> nil
+    end)
+  end
+
   @doc "Remove a cookie from the queue without emitting a Set-Cookie (Laravel `unqueue`)."
   def unqueue(name) do
     Process.put(
