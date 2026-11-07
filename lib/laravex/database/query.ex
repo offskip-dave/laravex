@@ -17,6 +17,21 @@ defmodule Laravex.Database.Query do
 
   def select(%__MODULE__{} = q, cols) when is_list(cols), do: %{q | columns: cols}
 
+  @doc "Append columns without replacing (Laravel `addSelect`). Replaces bare `*`."
+  def add_select(%__MODULE__{} = q, cols) when is_list(cols) do
+    cols = Enum.map(cols, &to_string/1)
+
+    columns =
+      case q.columns do
+        ["*"] -> cols
+        existing -> existing ++ cols
+      end
+
+    %{q | columns: columns}
+  end
+
+  def add_select(%__MODULE__{} = q, col), do: add_select(q, [col])
+
   def distinct(%__MODULE__{} = q, value \\ true), do: %{q | distinct?: value == true}
 
   @doc "Laravel `when` — apply `fun` when `condition` is truthy (Elixir-reserved name avoided)."
@@ -65,6 +80,30 @@ defmodule Laravex.Database.Query do
     %{
       q
       | havings: q.havings ++ [{sql, :raw}],
+        bindings: q.bindings ++ List.wrap(bindings)
+    }
+  end
+
+  def or_having(%__MODULE__{} = q, column, value) do
+    %{
+      q
+      | havings: q.havings ++ [{:or, "#{column} = ?", value}],
+        bindings: q.bindings ++ [value]
+    }
+  end
+
+  def or_having(%__MODULE__{} = q, column, op, value) do
+    %{
+      q
+      | havings: q.havings ++ [{:or, "#{column} #{op} ?", value}],
+        bindings: q.bindings ++ [value]
+    }
+  end
+
+  def or_having_raw(%__MODULE__{} = q, sql, bindings \\ []) when is_binary(sql) do
+    %{
+      q
+      | havings: q.havings ++ [{:or, sql, :raw}],
         bindings: q.bindings ++ List.wrap(bindings)
     }
   end
@@ -340,6 +379,12 @@ defmodule Laravex.Database.Query do
     %{q | wheres: q.wheres ++ [{"#{first} #{op} #{second}", :skip}]}
   end
 
+  def or_where_column(%__MODULE__{} = q, first, second), do: or_where_column(q, first, "=", second)
+
+  def or_where_column(%__MODULE__{} = q, first, op, second) when is_binary(op) do
+    %{q | wheres: q.wheres ++ [{:or, "#{first} #{op} #{second}", :skip}]}
+  end
+
   def where_raw(%__MODULE__{} = q, sql, bindings \\ []) when is_binary(sql) do
     %{q | wheres: q.wheres ++ [{sql, :raw}], bindings: q.bindings ++ List.wrap(bindings)}
   end
@@ -608,10 +653,19 @@ defmodule Laravex.Database.Query do
   defp having_clause(%{havings: nil}), do: ""
 
   defp having_clause(%{havings: havings}) do
-    sql =
-      Enum.map_join(havings, " AND ", fn
-        {fragment, _} -> fragment
-        fragment when is_binary(fragment) -> fragment
+    {sql, _} =
+      Enum.reduce(havings, {"", true}, fn
+        {:or, fragment, _}, {acc, first?} ->
+          joiner = if first?, do: "", else: " OR "
+          {acc <> joiner <> fragment, false}
+
+        {fragment, _}, {acc, first?} ->
+          joiner = if first?, do: "", else: " AND "
+          {acc <> joiner <> fragment, false}
+
+        fragment, {acc, first?} when is_binary(fragment) ->
+          joiner = if first?, do: "", else: " AND "
+          {acc <> joiner <> fragment, false}
       end)
 
     " HAVING " <> sql

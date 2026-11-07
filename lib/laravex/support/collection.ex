@@ -419,6 +419,14 @@ defmodule Laravex.Support.Collection do
   def diff(%__MODULE__{items: a}, %__MODULE__{items: b}), do: new(a -- b)
   def diff(%__MODULE__{items: a}, enumerable), do: new(a -- Enum.to_list(enumerable))
 
+  @doc "Items present in both collections (Laravel `intersect`)."
+  def intersect(%__MODULE__{items: a}, %__MODULE__{items: b}), do: new(Enum.filter(a, &(&1 in b)))
+
+  def intersect(%__MODULE__{items: a}, enumerable) do
+    other = Enum.to_list(enumerable)
+    new(Enum.filter(a, &(&1 in other)))
+  end
+
   def pipe(%__MODULE__{} = c, fun) when is_function(fun, 1), do: fun.(c)
 
   def tap(%__MODULE__{} = c, fun) when is_function(fun, 1) do

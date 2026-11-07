@@ -92,6 +92,21 @@ defmodule Laravex.Mail.Mailer do
     Map.update(message, :attachments, [att], fn list -> List.wrap(list) ++ [att] end)
   end
 
+  @doc "Set/merge CC recipients on a mailable map (Laravel `$mailable->cc`)."
+  def cc(%{} = message, addresses), do: put_addresses(message, :cc, addresses)
+
+  @doc "Set/merge BCC recipients on a mailable map (Laravel `$mailable->bcc`)."
+  def bcc(%{} = message, addresses), do: put_addresses(message, :bcc, addresses)
+
+  @doc "Set reply-to on a mailable map (Laravel `$mailable->replyTo`)."
+  def reply_to(%{} = message, address), do: Map.put(message, :reply_to, address)
+
+  defp put_addresses(%{} = message, key, addresses) do
+    incoming = List.wrap(addresses)
+    existing = List.wrap(Map.get(message, key))
+    Map.put(message, key, existing ++ incoming)
+  end
+
   defp normalize(%{to: _} = m) do
     from = Laravex.Config.Repository.get("mail.from", %{})
     body = render_body(m)

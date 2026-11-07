@@ -50,6 +50,41 @@ defmodule Laravex.Support.Helpers do
     if truthy?(condition), do: :ok, else: abort(status, message)
   end
 
+  @doc "Raise when `condition` is truthy (Laravel `throw_if`)."
+  def throw_if(condition, exception \\ RuntimeError)
+
+  def throw_if(condition, exception) when is_atom(exception) do
+    if truthy?(condition), do: raise(exception)
+    :ok
+  end
+
+  def throw_if(condition, message) when is_binary(message) do
+    if truthy?(condition), do: raise(RuntimeError, message: message)
+    :ok
+  end
+
+  def throw_if(condition, exception, message)
+      when is_atom(exception) and is_binary(message) do
+    if truthy?(condition), do: raise(exception, message: message)
+    :ok
+  end
+
+  @doc "Raise when `condition` is falsy (Laravel `throw_unless`)."
+  def throw_unless(condition, exception \\ RuntimeError)
+
+  def throw_unless(condition, exception) when is_atom(exception) do
+    if truthy?(condition), do: :ok, else: raise(exception)
+  end
+
+  def throw_unless(condition, message) when is_binary(message) do
+    if truthy?(condition), do: :ok, else: raise(RuntimeError, message: message)
+  end
+
+  def throw_unless(condition, exception, message)
+      when is_atom(exception) and is_binary(message) do
+    if truthy?(condition), do: :ok, else: raise(exception, message: message)
+  end
+
   def blank?(value) do
     cond do
       is_nil(value) -> true
