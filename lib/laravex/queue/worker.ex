@@ -199,7 +199,7 @@ defmodule Laravex.Queue.Worker do
 
     try do
       job_mod = resolve_job_module(data["job"])
-      args = data["args"] || []
+      args = decode_args(data["args"] || [])
       result = job_mod.handle(args)
       Laravex.Observability.record_job(job_mod, result)
       Laravex.Database.Connection.execute("DELETE FROM jobs WHERE id = ?", [id])
@@ -267,8 +267,28 @@ defmodule Laravex.Queue.Worker do
 
   defp parse_int(_, default), do: default
 
-  defp encode_args(args) when is_list(args), do: Enum.map(args, &to_string/1)
-  defp encode_args(args), do: [to_string(args)]
+  defp encode_args(args) when is_list(args), do: Enum.map(args, &encode_arg/1)
+  defp encode_args(args), do: [encode_arg(args)]
+
+  defp encode_arg(arg)
+       when is_binary(arg) or is_number(arg) or is_boolean(arg) or is_nil(arg) do
+    arg
+  end
+
+  defp encode_arg(arg) when is_atom(arg), do: Atom.to_string(arg)
+
+  defp encode_arg(arg) do
+    %{"__bin__" => Base.encode64(:erlang.term_to_binary(arg))}
+  end
+
+  defp decode_args(args) when is_list(args), do: Enum.map(args, &decode_arg/1)
+  defp decode_args(args), do: [decode_arg(args)]
+
+  defp decode_arg(%{"__bin__" => bin}) when is_binary(bin) do
+    :erlang.binary_to_term(Base.decode64!(bin))
+  end
+
+  defp decode_arg(arg), do: arg
 
   def failed_jobs do
     if Laravex.Database.Schema.has_table?("failed_jobs") do

@@ -12,18 +12,36 @@ defmodule Laravex.Events.Dispatcher do
   end
 
   def dispatch(event, payload \\ nil) when is_atom(event) or is_struct(event) do
-    {event_name, data} =
-      case event do
-        %mod{} = struct -> {mod, struct}
-        atom when is_atom(atom) -> {atom, payload}
-      end
+    {event_name, data} = unwrap_event(event, payload)
+    GenServer.call(__MODULE__, {:dispatch, event_name, data, :each})
+  end
 
-    GenServer.call(__MODULE__, {:dispatch, event_name, data})
+  @doc """
+  Dispatch until a listener returns a non-nil value (Laravel `Event::until`).
+  Returns that value, or `nil` if none stop the chain.
+  """
+  def until(event, payload \\ nil) when is_atom(event) or is_struct(event) do
+    {event_name, data} = unwrap_event(event, payload)
+    GenServer.call(__MODULE__, {:dispatch, event_name, data, :until})
+  end
+
+  def dispatch_if(condition, event, payload \\ nil) do
+    if truthy?(condition), do: dispatch(event, payload), else: false
+  end
+
+  def dispatch_unless(condition, event, payload \\ nil) do
+    if truthy?(condition), do: false, else: dispatch(event, payload)
   end
 
   def listeners do
     GenServer.call(__MODULE__, :listeners)
   end
+
+  defp unwrap_event(%mod{} = struct, _payload), do: {mod, struct}
+  defp unwrap_event(atom, payload) when is_atom(atom), do: {atom, payload}
+
+  defp truthy?(v) when v in [false, nil, 0, "", "0"], do: false
+  defp truthy?(_), do: true
 
   @impl true
   def handle_call({:listen, event, listener}, _from, state) do
@@ -31,12 +49,26 @@ defmodule Laravex.Events.Dispatcher do
     {:reply, :ok, %{state | listeners: listeners}}
   end
 
-  def handle_call({:dispatch, event, data}, _from, state) do
-    Enum.each(Map.get(state.listeners, event, []), fn listener ->
-      invoke_listener(listener, data)
-    end)
+  def handle_call({:dispatch, event, data, mode}, _from, state) do
+    listeners = Map.get(state.listeners, event, [])
 
-    {:reply, :ok, state}
+    reply =
+      case mode do
+        :each ->
+          Enum.each(listeners, &invoke_listener(&1, data))
+          :ok
+
+        :until ->
+          Enum.reduce_while(listeners, nil, fn listener, _ ->
+            case invoke_listener(listener, data) do
+              nil -> {:cont, nil}
+              false -> {:cont, nil}
+              result -> {:halt, result}
+            end
+          end)
+      end
+
+    {:reply, reply, state}
   end
 
   def handle_call(:listeners, _from, state) do
@@ -48,6 +80,7 @@ defmodule Laravex.Events.Dispatcher do
   defp invoke_listener(mod, data) when is_atom(mod) do
     if queued_listener?(mod) do
       Laravex.Queue.Worker.push(Laravex.Events.CallQueuedListener, [mod, data])
+      nil
     else
       apply(mod, :handle, [data])
     end

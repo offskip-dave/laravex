@@ -58,6 +58,66 @@ defmodule Laravex.Cache.Manager do
 
   def decrement(key, amount \\ 1) when is_number(amount), do: increment(key, -amount)
 
+  @doc """
+  Atomic-ish cache lock (Laravel `Cache::lock` lite, no Redis).
+
+      lock = Cache.lock(\"foo\", 10)
+      if Cache.get_lock(lock), do: ..., Cache.release(lock)
+  """
+  def lock(name, seconds \\ 60) when is_integer(seconds) and seconds > 0 do
+    %{name: to_string(name), seconds: seconds, owner: :erlang.unique_integer([:positive])}
+  end
+
+  def get_lock(%{name: name, seconds: seconds, owner: owner}) do
+    key = lock_key(name)
+
+    case get(key, :__missing__) do
+      :__missing__ ->
+        put(key, owner, seconds)
+        true
+
+      ^owner ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  def release(%{name: name, owner: owner}) do
+    key = lock_key(name)
+
+    case get(key, :__missing__) do
+      ^owner ->
+        forget(key)
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  @doc "Block until the lock is acquired or `seconds` elapses. Returns true/false."
+  def block(%{name: _, seconds: _} = lock, seconds \\ 5) when is_integer(seconds) and seconds >= 0 do
+    deadline = System.monotonic_time(:millisecond) + seconds * 1000
+    do_block(lock, deadline)
+  end
+
+  defp do_block(lock, deadline) do
+    if get_lock(lock) do
+      true
+    else
+      if System.monotonic_time(:millisecond) >= deadline do
+        false
+      else
+        Process.sleep(50)
+        do_block(lock, deadline)
+      end
+    end
+  end
+
+  defp lock_key(name), do: "lock:" <> to_string(name)
+
   @impl true
   def handle_call({:put, key, value, ttl}, _from, state) do
     store = effective_store()

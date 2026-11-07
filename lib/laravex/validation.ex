@@ -364,6 +364,26 @@ defmodule Laravex.Validation do
           do: [],
           else: ["The #{field} field must be present."]
 
+      "present_if:" <> rest ->
+        conditional_present(field, data, rest, :if)
+
+      "present_unless:" <> rest ->
+        conditional_present(field, data, rest, :unless)
+
+      "missing" ->
+        if field_present?(data, field),
+          do: ["The #{field} field must be missing."],
+          else: []
+
+      "missing_if:" <> rest ->
+        conditional_missing(field, data, rest, :if)
+
+      "missing_unless:" <> rest ->
+        conditional_missing(field, data, rest, :unless)
+
+      "prohibits:" <> rest ->
+        prohibits_rule(field, value, data, rest)
+
       "url" ->
         if is_nil(value) or blank?(value) or valid_url?(value),
           do: [],
@@ -843,6 +863,72 @@ defmodule Laravex.Validation do
 
       _ ->
         []
+    end
+  end
+
+  defp conditional_present(field, data, rest, mode) do
+    case String.split(rest, ",", parts: 2) do
+      [other, expected] ->
+        other = String.trim(other)
+        expected = String.trim(expected)
+        other_val = to_string(data_get(data, other) || "")
+        match? = other_val == expected
+
+        required? =
+          case mode do
+            :if -> match?
+            :unless -> not match?
+          end
+
+        if required? and not field_present?(data, field) do
+          ["The #{field} field must be present."]
+        else
+          []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp conditional_missing(field, data, rest, mode) do
+    case String.split(rest, ",", parts: 2) do
+      [other, expected] ->
+        other = String.trim(other)
+        expected = String.trim(expected)
+        other_val = to_string(data_get(data, other) || "")
+        match? = other_val == expected
+
+        must_miss? =
+          case mode do
+            :if -> match?
+            :unless -> not match?
+          end
+
+        if must_miss? and field_present?(data, field) do
+          ["The #{field} field must be missing."]
+        else
+          []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp prohibits_rule(field, value, data, rest) do
+    if blank?(value) do
+      []
+    else
+      others = rest |> String.split(",") |> Enum.map(&String.trim/1)
+
+      Enum.flat_map(others, fn other ->
+        if field_present?(data, other) and filled_field?(data, other) do
+          ["The #{other} field is prohibited when #{field} is present."]
+        else
+          []
+        end
+      end)
     end
   end
 

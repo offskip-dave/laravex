@@ -19,7 +19,29 @@ defmodule Laravex.Notifications.Notifier do
   def send(notifiable, notification) do
     ensure()
     {notification_mod, payload} = unwrap(notification)
+    deliver_all(notifiable, notification_mod, payload)
+  end
 
+  @doc """
+  Queue a notification for later delivery (Laravel `Notification::later`).
+
+      Notifier.later(user, WelcomeNotification, 60)
+  """
+  def later(notifiable, notification, delay_seconds, opts \\ [])
+      when is_integer(delay_seconds) and delay_seconds >= 0 do
+    ensure()
+    {notification_mod, payload} = unwrap(notification)
+
+    Laravex.Queue.Worker.push(
+      Laravex.Notifications.SendQueuedNotification,
+      [notifiable, notification_mod, payload],
+      Keyword.merge(opts, delay: delay_seconds)
+    )
+
+    :ok
+  end
+
+  def deliver_all(notifiable, notification_mod, payload) do
     channels =
       cond do
         function_exported?(notification_mod, :via, 1) ->
@@ -203,6 +225,15 @@ defmodule Laravex.Notifications.Notifier do
   end
 end
 
+defmodule Laravex.Notifications.SendQueuedNotification do
+  @moduledoc false
+  use Laravex.Queue.Job, queue: true
+
+  def handle([notifiable, notification_mod, payload]) do
+    Laravex.Notifications.Notifier.deliver_all(notifiable, notification_mod, payload)
+  end
+end
+
 defmodule Laravex.Notifications.Notifiable do
   @moduledoc "Mixin for models that can receive notifications (inbox helpers included)."
 
@@ -210,6 +241,10 @@ defmodule Laravex.Notifications.Notifiable do
     quote do
       def notify(%__MODULE__{} = model, notification) do
         Laravex.Notifications.Notifier.send(model, notification)
+      end
+
+      def notify_later(%__MODULE__{} = model, notification, delay_seconds, opts \\ []) do
+        Laravex.Notifications.Notifier.later(model, notification, delay_seconds, opts)
       end
 
       def notifications(%__MODULE__{} = model) do

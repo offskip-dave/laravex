@@ -270,6 +270,31 @@ defmodule Laravex.Support.Collection do
     c
   end
 
+  def shuffle(%__MODULE__{items: items}), do: new(Enum.shuffle(items))
+
+  def random(%__MODULE__{items: []}), do: nil
+  def random(%__MODULE__{items: items}), do: Enum.random(items)
+
+  def random(%__MODULE__{items: items}, n) when is_integer(n) and n >= 0 do
+    new(items |> Enum.shuffle() |> Enum.take(n))
+  end
+
+  def pad(%__MODULE__{items: items}, size, value \\ nil) when is_integer(size) do
+    abs_size = abs(size)
+    current = length(items)
+
+    cond do
+      current >= abs_size ->
+        new(Enum.take(items, abs_size))
+
+      size >= 0 ->
+        new(items ++ List.duplicate(value, abs_size - current))
+
+      true ->
+        new(List.duplicate(value, abs_size - current) ++ items)
+    end
+  end
+
   defp truthy?(v) when v in [false, nil, 0, "", "0"], do: false
   defp truthy?(_), do: true
 
