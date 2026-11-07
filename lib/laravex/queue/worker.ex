@@ -32,13 +32,28 @@ defmodule Laravex.Queue.Worker do
 
     cond do
       connection == "sync" or not should_queue? ->
-        dispatch_sync(job_mod, args)
+        try do
+          result = dispatch_sync(job_mod, args)
+          record_batch(opts, :ok)
+          result
+        rescue
+          e ->
+            record_batch(opts, :failed)
+            reraise e, __STACKTRACE__
+        end
 
       connection == "deferred" ->
         push_deferred(job_mod, args, opts)
 
       connection == "database" ->
         push_database(job_mod, args, opts)
+    end
+  end
+
+  defp record_batch(opts, status) do
+    case Keyword.get(opts, :batch_id) do
+      id when is_binary(id) and id != "" -> Laravex.Bus.record_job_finished(id, status)
+      _ -> :ok
     end
   end
 
@@ -66,11 +81,14 @@ defmodule Laravex.Queue.Worker do
 
   defp push_database(job_mod, args, opts) do
     payload =
-      Laravex.Support.JSON.encode!(%{
+      %{
         "job" => Atom.to_string(job_mod),
         "args" => encode_args(args),
-        "tries" => Keyword.get(opts, :tries, 1)
-      })
+        "tries" => Keyword.get(opts, :tries, 1),
+        "backoff" => Keyword.get(opts, :backoff, 0)
+      }
+      |> maybe_put_batch(opts)
+      |> Laravex.Support.JSON.encode!()
 
     now = System.system_time(:second)
     delay = Keyword.get(opts, :delay, 0)
@@ -82,6 +100,13 @@ defmodule Laravex.Queue.Worker do
     )
 
     :ok
+  end
+
+  defp maybe_put_batch(payload, opts) do
+    case Keyword.get(opts, :batch_id) do
+      id when is_binary(id) and id != "" -> Map.put(payload, "batch_id", id)
+      _ -> payload
+    end
   end
 
   defp push_deferred(job_mod, args, opts) do
@@ -158,6 +183,13 @@ defmodule Laravex.Queue.Worker do
       [System.system_time(:second), id]
     )
 
+    attempts =
+      case Map.get(job, "attempts") do
+        n when is_integer(n) -> n + 1
+        n when is_binary(n) -> String.to_integer(n) + 1
+        _ -> 1
+      end
+
     data =
       case Laravex.Support.JSON.decode(payload) do
         {:ok, decoded} -> decoded
@@ -170,10 +202,12 @@ defmodule Laravex.Queue.Worker do
       result = job_mod.handle(args)
       Laravex.Observability.record_job(job_mod, result)
       Laravex.Database.Connection.execute("DELETE FROM jobs WHERE id = ?", [id])
+      Laravex.Bus.record_job_finished(data["batch_id"], :ok)
+      result
     rescue
       e ->
         Laravex.Observability.record_job(Map.get(data, "job"), {:error, Exception.message(e)})
-        fail(job, e)
+        fail(job, data, attempts, e)
     end
   end
 
@@ -189,23 +223,48 @@ defmodule Laravex.Queue.Worker do
     end
   end
 
-  defp fail(%{"id" => id, "payload" => payload, "queue" => queue}, error) do
-    Laravex.Database.Connection.execute("DELETE FROM jobs WHERE id = ?", [id])
+  defp fail(%{"id" => id, "payload" => payload, "queue" => queue}, data, attempts, error) do
+    max_tries = parse_int(Map.get(data, "tries"), 1)
+    backoff = parse_int(Map.get(data, "backoff"), 0)
 
-    if Laravex.Database.Schema.has_table?("failed_jobs") do
+    if attempts < max_tries do
+      available_at = System.system_time(:second) + max(backoff, 0)
+
       Laravex.Database.Connection.execute(
-        "INSERT INTO failed_jobs (uuid, connection, queue, payload, exception, failed_at) VALUES (?, ?, ?, ?, ?, ?)",
-        [
-          Laravex.Support.Helpers.str_random(16),
-          "database",
-          queue,
-          payload,
-          Exception.message(error),
-          DateTime.utc_now() |> DateTime.to_iso8601()
-        ]
+        "UPDATE jobs SET reserved_at = NULL, available_at = ? WHERE id = ?",
+        [available_at, id]
       )
+    else
+      Laravex.Database.Connection.execute("DELETE FROM jobs WHERE id = ?", [id])
+
+      if Laravex.Database.Schema.has_table?("failed_jobs") do
+        Laravex.Database.Connection.execute(
+          "INSERT INTO failed_jobs (uuid, connection, queue, payload, exception, failed_at) VALUES (?, ?, ?, ?, ?, ?)",
+          [
+            Laravex.Support.Helpers.str_random(16),
+            "database",
+            queue,
+            payload,
+            Exception.message(error),
+            DateTime.utc_now() |> DateTime.to_iso8601()
+          ]
+        )
+      end
+
+      Laravex.Bus.record_job_finished(Map.get(data, "batch_id"), :failed)
     end
   end
+
+  defp parse_int(n, _default) when is_integer(n), do: n
+
+  defp parse_int(n, default) when is_binary(n) do
+    case Integer.parse(n) do
+      {i, _} -> i
+      :error -> default
+    end
+  end
+
+  defp parse_int(_, default), do: default
 
   defp encode_args(args) when is_list(args), do: Enum.map(args, &to_string/1)
   defp encode_args(args), do: [to_string(args)]

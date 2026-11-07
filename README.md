@@ -33,11 +33,11 @@ mix test
 | Layer | Capabilities |
 |---|---|
 | Foundation | Container, HTTP/router, global + terminable middleware, CORS, TrustHosts/Proxies, cache.headers, cookie encrypt, `/up` + `/health`, JSON 404/exceptions, logging |
-| Database | SQLite, Schema/Blueprint, migrations, query builder, **Eloquex** (fillable/guarded, touch, relations, scopes, factories) |
+| Database | SQLite, Schema/Blueprint, migrations, query builder, **Eloquex** (fillable/guarded, touch, has_many/has_one/belongs_to/belongs_to_many, batched `with`/`with_count`, scopes, factories) |
 | Auth web loop | Session (file/database), CSRF, flash, guard, policies/gates, password broker/reset, FormRequest + Rule objects, Crypt, signed URLs, DB API tokens |
 | DX | `make:*`, migrate/fresh/wipe/seed, config/route/event/view cache, `optimize`, `db:show`/`model:show`, queue failed tools, schedule/event list, serve, tinker, Str/Arr, Collection, `AGENTS.md` |
-| Services | Cache, queue (sync/database/deferred, ShouldQueue, failed retry), Bus chain, mail (log/array), notifications, logging, filesystem, named rate limiters |
-| HTTP | Static files, multipart uploads, JsonResource + paginator links, OTP `:json`, `Http.Client` outbound |
+| Services | Cache, queue (sync/database/deferred, ShouldQueue, tries/backoff, failed retry), Bus chain + batch, mail (log/array), notifications, logging, filesystem, named rate limiters |
+| HTTP | Static files, multipart uploads, JsonResource (`when_loaded`/`merge`) + paginator links, OTP `:json`, `Http.Client` outbound |
 | Views | Blade `{{ }}`, `old()`, `@lang`/`__()`, `@csrf`/`@method`/`@selected`/`@checked`, `@if`/`@else`/`@unless`/`@forelse`, `@include`, `@foreach`, `@error`/`@session`, `@auth`/`@can`, `@json`, components/stacks |
 | Async | Events/listeners, notifications, schedule (cron/`hourly`/`daily`), broadcasting bus |
 | Ecosystem | `install:api` (tokens), `install:broadcasting`, `install:starter-kit`, observability recorder |

@@ -161,9 +161,32 @@ defmodule Laravex.Database.Model do
         {:has_many, name, related, foreign_key}
       end
 
+      def has_one(name, related, foreign_key \\ nil) do
+        foreign_key =
+          foreign_key || Macro.underscore(__MODULE__ |> Module.split() |> List.last()) <> "_id"
+
+        {:has_one, name, related, foreign_key}
+      end
+
       def belongs_to(name, related, foreign_key \\ nil) do
         foreign_key = foreign_key || to_string(name) <> "_id"
         {:belongs_to, name, related, foreign_key}
+      end
+
+      def belongs_to_many(name, related, pivot \\ nil, foreign_pivot_key \\ nil, related_pivot_key \\ nil) do
+        owner_base = Macro.underscore(__MODULE__ |> Module.split() |> List.last())
+        related_base = Macro.underscore(related |> Module.split() |> List.last())
+
+        pivot =
+          pivot ||
+            [owner_base, related_base]
+            |> Enum.sort()
+            |> Enum.join("_")
+
+        foreign_pivot_key = foreign_pivot_key || owner_base <> "_id"
+        related_pivot_key = related_pivot_key || related_base <> "_id"
+
+        {:belongs_to_many, name, related, pivot, foreign_pivot_key, related_pivot_key}
       end
 
       def load(%__MODULE__{} = model, relation_name)
@@ -173,6 +196,10 @@ defmodule Laravex.Database.Model do
 
       def with(models, relations) when is_list(models) do
         Laravex.Database.Model.with_relations(models, __MODULE__, relations)
+      end
+
+      def with_count(models, relations) when is_list(models) do
+        Laravex.Database.Model.with_counts(models, __MODULE__, relations)
       end
 
       def from_row(row) when is_map(row) do
@@ -267,15 +294,187 @@ defmodule Laravex.Database.Model do
   def with_relations(models, owner_mod, relations) do
     rels = List.wrap(relations)
 
-    Enum.map(models, fn model ->
-      Enum.reduce(rels, model, fn rel, acc -> load_relation(acc, owner_mod, rel) end)
+    Enum.reduce(rels, models, fn rel, acc ->
+      batch_load_relation(acc, owner_mod, rel)
+    end)
+  end
+
+  def with_counts(models, owner_mod, relations) do
+    rels = List.wrap(relations)
+
+    Enum.reduce(rels, models, fn rel, acc ->
+      batch_count_relation(acc, owner_mod, rel)
     end)
   end
 
   def load_relation(model, owner_mod, relation_name, opts \\ []) do
+    [loaded] = batch_load_relation([model], owner_mod, relation_name, opts)
+    loaded
+  end
+
+  def batch_load_relation(models, owner_mod, relation_name, opts \\ [])
+  def batch_load_relation([], _owner_mod, _relation_name, _opts), do: []
+
+  def batch_load_relation(models, owner_mod, relation_name, opts) do
     relation_name = to_string(relation_name)
     query_opts = Keyword.take(opts, [:with_trashed, :only_trashed])
+    rel_def = relation_def(owner_mod, relation_name)
 
+    case rel_def do
+      {:has_many, _name, related, fk} ->
+        ids = Enum.map(models, & &1.id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+        grouped =
+          if ids == [] do
+            %{}
+          else
+            related.query(query_opts)
+            |> Laravex.Database.Query.where_in(fk, ids)
+            |> Laravex.Database.Query.get()
+            |> Enum.map(&related.from_row/1)
+            |> Enum.group_by(fn row -> Map.get(row, String.to_atom(fk)) end)
+          end
+
+        Enum.map(models, fn model ->
+          put_loaded(model, relation_name, Map.get(grouped, model.id, []))
+        end)
+
+      {:has_one, _name, related, fk} ->
+        ids = Enum.map(models, & &1.id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+        by_owner =
+          if ids == [] do
+            %{}
+          else
+            related.query(query_opts)
+            |> Laravex.Database.Query.where_in(fk, ids)
+            |> Laravex.Database.Query.get()
+            |> Enum.map(&related.from_row/1)
+            |> Enum.reduce(%{}, fn row, acc ->
+              owner_id = Map.get(row, String.to_atom(fk))
+              Map.put_new(acc, owner_id, row)
+            end)
+          end
+
+        Enum.map(models, fn model ->
+          put_loaded(model, relation_name, Map.get(by_owner, model.id))
+        end)
+
+      {:belongs_to, _name, related, fk} ->
+        fk_atom = String.to_atom(fk)
+
+        parent_ids =
+          models
+          |> Enum.map(&Map.get(&1, fk_atom))
+          |> Enum.reject(&is_nil/1)
+          |> Enum.uniq()
+
+        by_id =
+          if parent_ids == [] do
+            %{}
+          else
+            related.query(query_opts)
+            |> Laravex.Database.Query.where_in("id", parent_ids)
+            |> Laravex.Database.Query.get()
+            |> Enum.map(&related.from_row/1)
+            |> Map.new(fn row -> {row.id, row} end)
+          end
+
+        Enum.map(models, fn model ->
+          put_loaded(model, relation_name, Map.get(by_id, Map.get(model, fk_atom)))
+        end)
+
+      {:belongs_to_many, _name, related, pivot, fk, rk} ->
+        ids = Enum.map(models, & &1.id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+        pivot_rows =
+          if ids == [] do
+            []
+          else
+            Laravex.Database.Query.table(pivot)
+            |> Laravex.Database.Query.where_in(fk, ids)
+            |> Laravex.Database.Query.get()
+          end
+
+        related_ids =
+          pivot_rows
+          |> Enum.map(fn row -> Map.get(row, rk) || Map.get(row, String.to_atom(rk)) end)
+          |> Enum.reject(&is_nil/1)
+          |> Enum.uniq()
+
+        by_related =
+          if related_ids == [] do
+            %{}
+          else
+            related.query(query_opts)
+            |> Laravex.Database.Query.where_in("id", related_ids)
+            |> Laravex.Database.Query.get()
+            |> Enum.map(&related.from_row/1)
+            |> Map.new(fn row -> {row.id, row} end)
+          end
+
+        grouped =
+          Enum.reduce(pivot_rows, %{}, fn row, acc ->
+            owner_id = Map.get(row, fk) || Map.get(row, String.to_atom(fk))
+            related_id = Map.get(row, rk) || Map.get(row, String.to_atom(rk))
+            child = Map.get(by_related, related_id)
+            if owner_id && child, do: Map.update(acc, owner_id, [child], &(&1 ++ [child])), else: acc
+          end)
+
+        Enum.map(models, fn model ->
+          put_loaded(model, relation_name, Map.get(grouped, model.id, []))
+        end)
+
+      _ ->
+        models
+    end
+  end
+
+  def batch_count_relation(models, owner_mod, relation_name) do
+    relation_name = to_string(relation_name)
+    count_key = relation_name <> "_count"
+    rel_def = relation_def(owner_mod, relation_name)
+    ids = Enum.map(models, & &1.id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+    counts =
+      case rel_def do
+        {:has_many, _n, related, fk} when ids != [] ->
+          related.query()
+          |> Laravex.Database.Query.where_in(fk, ids)
+          |> Laravex.Database.Query.get()
+          |> Enum.reduce(%{}, fn row, acc ->
+            owner_id = Map.get(row, fk) || Map.get(row, String.to_atom(fk))
+            Map.update(acc, owner_id, 1, &(&1 + 1))
+          end)
+
+        {:has_one, _n, related, fk} when ids != [] ->
+          related.query()
+          |> Laravex.Database.Query.where_in(fk, ids)
+          |> Laravex.Database.Query.get()
+          |> Enum.reduce(%{}, fn row, acc ->
+            owner_id = Map.get(row, fk) || Map.get(row, String.to_atom(fk))
+            Map.put_new(acc, owner_id, 1)
+          end)
+
+        {:belongs_to_many, _n, _related, pivot, fk, _rk} when ids != [] ->
+          Laravex.Database.Query.table(pivot)
+          |> Laravex.Database.Query.where_in(fk, ids)
+          |> Laravex.Database.Query.get()
+          |> Enum.reduce(%{}, fn row, acc ->
+            owner_id = Map.get(row, fk) || Map.get(row, String.to_atom(fk))
+            Map.update(acc, owner_id, 1, &(&1 + 1))
+          end)
+
+        _ ->
+          %{}
+      end
+
+    Enum.map(models, fn model ->
+      put_loaded(model, count_key, Map.get(counts, model.id, 0))
+    end)
+  end
+
+  defp relation_def(owner_mod, relation_name) do
     relations =
       if function_exported?(owner_mod, :relations, 0) do
         owner_mod.relations()
@@ -283,39 +482,27 @@ defmodule Laravex.Database.Model do
         []
       end
 
-    case Enum.find(relations, fn
-           {_, name, _, _} -> to_string(name) == relation_name
-           _ -> false
-         end) do
-      {:has_many, _name, related, fk} ->
-        rows =
-          related.query(query_opts)
-          |> Laravex.Database.Query.where(fk, model.id)
-          |> Laravex.Database.Query.get()
-          |> Enum.map(&related.from_row/1)
-
-        put_loaded(model, relation_name, rows)
-
-      {:belongs_to, _name, related, fk} ->
-        fk_atom = String.to_atom(fk)
-        fk_val = Map.get(model, fk_atom)
-        row = if fk_val, do: related.find(fk_val, query_opts), else: nil
-        put_loaded(model, relation_name, row)
-
-      _ ->
-        model
-    end
+    Laravex.Eloquex.Relation.find_def(relations, relation_name)
   end
 
   defp put_loaded(model, name, value) do
-    key = {model.__struct__, Map.get(model, :id), name}
-    Process.put({:laravex_relation, key}, value)
+    Process.put(relation_key(model, name), {:loaded, value})
     model
   end
 
   def get_relation(model, name) do
-    key = {model.__struct__, Map.get(model, :id), to_string(name)}
-    Process.get({:laravex_relation, key})
+    case Process.get(relation_key(model, name)) do
+      {:loaded, value} -> value
+      _ -> nil
+    end
+  end
+
+  def relation_loaded?(model, name) do
+    match?({:loaded, _}, Process.get(relation_key(model, name)))
+  end
+
+  defp relation_key(model, name) do
+    {:laravex_relation, {model.__struct__, Map.get(model, :id), to_string(name)}}
   end
 
   def sync_original(model) do
@@ -358,6 +545,9 @@ defmodule Laravex.Database.Model do
 
       Map.has_key?(model, key_atom) ->
         cast_out(mod, to_string(key), Map.get(model, key_atom))
+
+      relation_loaded?(model, key) ->
+        get_relation(model, key)
 
       true ->
         nil

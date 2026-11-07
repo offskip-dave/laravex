@@ -1,9 +1,9 @@
 defmodule Laravex.Eloquex.Relation do
   @moduledoc """
-  Eloquex HasMany / BelongsTo relation helpers.
+  Eloquex relation helpers: HasMany, HasOne, BelongsTo, BelongsToMany.
 
   Related queries honor soft deletes via `related.query/1` (pass `with_trashed: true`
-  to include trashed children).
+  to include trashed children). BelongsToMany supports lite `attach` / `detach` / `sync`.
   """
 
   defmodule HasMany do
@@ -27,6 +27,37 @@ defmodule Laravex.Eloquex.Relation do
     end
 
     def count(%__MODULE__{} = rel, opts \\ []), do: length(get(rel, opts))
+  end
+
+  defmodule HasOne do
+    defstruct [:owner, :related, :foreign_key, :name]
+
+    def get(%__MODULE__{} = rel, opts \\ []) do
+      case HasMany.get(
+             %HasMany{
+               owner: rel.owner,
+               related: rel.related,
+               foreign_key: rel.foreign_key,
+               name: rel.name
+             },
+             opts
+           ) do
+        [row | _] -> row
+        _ -> nil
+      end
+    end
+
+    def create(%__MODULE__{} = rel, attrs) when is_map(attrs) do
+      HasMany.create(
+        %HasMany{
+          owner: rel.owner,
+          related: rel.related,
+          foreign_key: rel.foreign_key,
+          name: rel.name
+        },
+        attrs
+      )
+    end
   end
 
   defmodule BelongsTo do
@@ -54,6 +85,84 @@ defmodule Laravex.Eloquex.Relation do
     end
   end
 
+  defmodule BelongsToMany do
+    defstruct [:owner, :related, :pivot, :foreign_key, :related_key, :name]
+
+    def get(%__MODULE__{} = rel, opts \\ []) do
+      ids = related_ids(rel)
+
+      if ids == [] do
+        []
+      else
+        related = rel.related
+
+        related.query(opts)
+        |> Laravex.Database.Query.where_in("id", ids)
+        |> Laravex.Database.Query.get()
+        |> Enum.map(&related.from_row/1)
+      end
+    end
+
+    def related_ids(%__MODULE__{owner: owner, pivot: pivot, foreign_key: fk, related_key: rk}) do
+      Laravex.Database.Query.table(pivot)
+      |> Laravex.Database.Query.where(fk, owner.id)
+      |> Laravex.Database.Query.get()
+      |> Enum.map(fn row -> Map.get(row, rk) || Map.get(row, String.to_atom(rk)) end)
+      |> Enum.reject(&is_nil/1)
+    end
+
+    def attach(%__MODULE__{} = rel, ids, attrs \\ %{}) do
+      attrs = Laravex.Database.Model.stringify(attrs)
+      now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+      Enum.each(List.wrap(ids), fn id ->
+        row =
+          attrs
+          |> Map.put(rel.foreign_key, rel.owner.id)
+          |> Map.put(rel.related_key, id)
+          |> Map.put_new("created_at", now)
+          |> Map.put_new("updated_at", now)
+
+        insert_pivot(rel.pivot, row)
+      end)
+
+      :ok
+    end
+
+    def detach(%__MODULE__{} = rel, ids \\ :all) do
+      q =
+        Laravex.Database.Query.table(rel.pivot)
+        |> Laravex.Database.Query.where(rel.foreign_key, rel.owner.id)
+
+      q =
+        case ids do
+          :all -> q
+          list -> Laravex.Database.Query.where_in(q, rel.related_key, List.wrap(list))
+        end
+
+      Laravex.Database.Query.delete(q)
+      :ok
+    end
+
+    def sync(%__MODULE__{} = rel, ids) do
+      detach(rel, :all)
+      attach(rel, ids)
+    end
+
+    def count(%__MODULE__{} = rel), do: length(related_ids(rel))
+
+    defp insert_pivot(pivot, attrs) when is_map(attrs) do
+      cols = Map.keys(attrs) |> Enum.map(&to_string/1)
+      vals = Enum.map(cols, &Map.get(attrs, &1))
+      placeholders = Enum.map_join(cols, ", ", fn _ -> "?" end)
+
+      Laravex.Database.Connection.execute(
+        "INSERT INTO #{pivot} (#{Enum.join(cols, ", ")}) VALUES (#{placeholders})",
+        vals
+      )
+    end
+  end
+
   def for(model, name) when is_atom(name) or is_binary(name) do
     owner_mod = model.__struct__
     name_str = to_string(name)
@@ -61,18 +170,38 @@ defmodule Laravex.Eloquex.Relation do
     relations =
       if function_exported?(owner_mod, :relations, 0), do: owner_mod.relations(), else: []
 
-    case Enum.find(relations, fn
-           {_, n, _, _} -> to_string(n) == name_str
-           _ -> false
-         end) do
+    case find_def(relations, name_str) do
       {:has_many, n, related, fk} ->
         %HasMany{owner: model, related: related, foreign_key: fk, name: n}
+
+      {:has_one, n, related, fk} ->
+        %HasOne{owner: model, related: related, foreign_key: fk, name: n}
 
       {:belongs_to, n, related, fk} ->
         %BelongsTo{owner: model, related: related, foreign_key: fk, name: n}
 
+      {:belongs_to_many, n, related, pivot, fk, rk} ->
+        %BelongsToMany{
+          owner: model,
+          related: related,
+          pivot: pivot,
+          foreign_key: fk,
+          related_key: rk,
+          name: n
+        }
+
       _ ->
         nil
     end
+  end
+
+  def find_def(relations, name_str) when is_list(relations) do
+    Enum.find(relations, fn
+      tup when is_tuple(tup) and tuple_size(tup) >= 2 ->
+        to_string(elem(tup, 1)) == to_string(name_str)
+
+      _ ->
+        false
+    end)
   end
 end
