@@ -12,6 +12,34 @@ defmodule Laravex.Bus do
       Laravex.Bus.then(batch, {App.Jobs.NotifyDone, :handle, [[]]})
   """
 
+  @fake_key :laravex_bus_fake
+  @recorded_key :laravex_bus_recorded
+
+  @doc "Fake the bus (record dispatches without running jobs)."
+  def fake do
+    Process.put(@fake_key, true)
+    Process.put(@recorded_key, [])
+    :ok
+  end
+
+  def dispatched, do: Enum.reverse(Process.get(@recorded_key, []))
+
+  def clear, do: (Process.put(@recorded_key, []); :ok)
+
+  def assert_dispatched(fun) when is_function(fun, 1) do
+    Enum.any?(dispatched(), fun)
+  end
+
+  def assert_not_dispatched(fun) when is_function(fun, 1) do
+    not assert_dispatched(fun)
+  end
+
+  defp fake?, do: Process.get(@fake_key, false) == true
+
+  defp record(entry) do
+    Process.put(@recorded_key, [entry | Process.get(@recorded_key, [])])
+  end
+
   defmodule Batch do
     defstruct id: nil,
               name: nil,
@@ -26,6 +54,15 @@ defmodule Laravex.Bus do
   end
 
   def chain(jobs) when is_list(jobs) do
+    if fake?() do
+      record({:chain, jobs})
+      :ok
+    else
+      do_chain(jobs)
+    end
+  end
+
+  defp do_chain(jobs) do
     Enum.each(jobs, fn
       {mod, args} when is_atom(mod) ->
         Laravex.Queue.Worker.dispatch_sync(mod, List.wrap(args))
@@ -41,11 +78,21 @@ defmodule Laravex.Bus do
   end
 
   def dispatch(job_mod, args \\ [], opts \\ []) when is_atom(job_mod) do
-    Laravex.Queue.Worker.push(job_mod, List.wrap(args), opts)
+    if fake?() do
+      record({:dispatch, job_mod, List.wrap(args), opts})
+      :ok
+    else
+      Laravex.Queue.Worker.push(job_mod, List.wrap(args), opts)
+    end
   end
 
   def dispatch_sync(job_mod, args \\ []) when is_atom(job_mod) do
-    Laravex.Queue.Worker.dispatch_sync(job_mod, List.wrap(args))
+    if fake?() do
+      record({:dispatch_sync, job_mod, List.wrap(args)})
+      :ok
+    else
+      Laravex.Queue.Worker.dispatch_sync(job_mod, List.wrap(args))
+    end
   end
 
   @doc """
@@ -55,6 +102,32 @@ defmodule Laravex.Bus do
   `:connection`, `:queue`, `:tries`, `:delay`.
   """
   def batch(jobs, opts \\ []) when is_list(jobs) do
+    if fake?() do
+      record({:batch, jobs, opts})
+      fake_batch(jobs, opts)
+    else
+      do_batch(jobs, opts)
+    end
+  end
+
+  defp fake_batch(jobs, opts) do
+    now = System.system_time(:second)
+
+    %Batch{
+      id: "fake-" <> Laravex.Support.Str.uuid(),
+      name: Keyword.get(opts, :name, "") |> to_string(),
+      total_jobs: length(jobs),
+      pending_jobs: 0,
+      failed_jobs: 0,
+      failed_job_ids: [],
+      options: nil,
+      created_at: now,
+      finished_at: now,
+      cancelled_at: nil
+    }
+  end
+
+  defp do_batch(jobs, opts) do
     unless Laravex.Database.Schema.has_table?("job_batches") do
       raise "job_batches table is missing — run migrations first"
     end

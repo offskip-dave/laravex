@@ -202,95 +202,27 @@ defmodule Laravex.Database.Model do
       def only_trashed, do: all(only_trashed: true)
 
       def create(attrs) when is_map(attrs) do
-        model = new(attrs)
-        now = DateTime.utc_now() |> DateTime.to_iso8601()
-
-        row =
-          model
-          |> Map.from_struct()
-          |> Map.drop([:__struct__, :id])
-          |> Enum.reject(fn {k, v} -> is_nil(v) or k in [:__relations__] end)
-          |> Map.new(fn {k, v} -> {to_string(k), v} end)
-          |> Map.put("created_at", now)
-          |> Map.put("updated_at", now)
-
-        id = Laravex.Database.Query.insert(table_name(), row)
-        find(id)
+        Laravex.Database.Model.perform_create(__MODULE__, attrs)
       end
 
-      def save(%__MODULE__{id: nil} = model) do
-        attrs =
-          model
-          |> Map.from_struct()
-          |> Map.drop([:__struct__, :id, :__relations__])
-          |> Enum.reject(fn {_k, v} -> is_nil(v) end)
-          |> Map.new(fn {k, v} -> {to_string(k), v} end)
-
-        create(attrs)
+      def save(%__MODULE__{} = model) do
+        Laravex.Database.Model.perform_save(__MODULE__, model)
       end
 
-      def save(%__MODULE__{id: id} = model) do
-        now = DateTime.utc_now() |> DateTime.to_iso8601()
-        changes = Laravex.Database.Model.get_changes(model)
-
-        attrs =
-          if map_size(changes) == 0 do
-            %{"updated_at" => now}
-          else
-            changes
-            |> Map.new(fn {k, v} -> {to_string(k), v} end)
-            |> then(&Laravex.Database.Model.apply_mutators(__MODULE__, &1))
-            |> then(&Laravex.Database.Model.apply_persist_casts(&1, __MODULE__))
-            |> Map.put("updated_at", now)
-          end
-
-        Laravex.Database.Query.table(table_name())
-        |> Laravex.Database.Query.where("id", id)
-        |> Laravex.Database.Query.update(attrs)
-
-        saved = find(id, with_trashed: true)
-
-        if saved do
-          saved
-          |> Laravex.Database.Model.sync_was_changed(changes)
-          |> Laravex.Database.Model.touch_parents()
-        else
-          saved
-        end
+      def save_quietly(%__MODULE__{} = model) do
+        Laravex.Database.Model.without_events(fn -> save(model) end)
       end
 
-      def delete(%__MODULE__{id: id} = model) do
-        if unquote(soft_deletes) do
-          now = DateTime.utc_now() |> DateTime.to_iso8601()
-
-          Laravex.Database.Query.table(table_name())
-          |> Laravex.Database.Query.where("id", id)
-          |> Laravex.Database.Query.update(%{"deleted_at" => now})
-
-          :ok
-        else
-          force_delete(model)
-        end
+      def delete(%__MODULE__{} = model) do
+        Laravex.Database.Model.perform_delete(__MODULE__, model, unquote(soft_deletes))
       end
 
-      def force_delete(%__MODULE__{id: id}) do
-        Laravex.Database.Query.table(table_name())
-        |> Laravex.Database.Query.where("id", id)
-        |> Laravex.Database.Query.delete()
-
-        :ok
+      def force_delete(%__MODULE__{} = model) do
+        Laravex.Database.Model.perform_force_delete(__MODULE__, model)
       end
 
-      def restore(%__MODULE__{id: id}) do
-        if unquote(soft_deletes) do
-          Laravex.Database.Query.table(table_name())
-          |> Laravex.Database.Query.where("id", id)
-          |> Laravex.Database.Query.update(%{"deleted_at" => nil})
-
-          find(id)
-        else
-          find(id)
-        end
+      def restore(%__MODULE__{} = model) do
+        Laravex.Database.Model.perform_restore(__MODULE__, model, unquote(soft_deletes))
       end
 
       @doc "True when the model has a non-nil `deleted_at` (Laravel `trashed()`)."
@@ -309,6 +241,10 @@ defmodule Laravex.Database.Model do
 
       def simple_paginate(per_page \\ 15, page \\ 1, opts \\ []) do
         Laravex.Database.Model.simple_paginate(__MODULE__, per_page, page, opts)
+      end
+
+      def cursor_paginate(per_page \\ 15, opts \\ []) do
+        Laravex.Database.Model.cursor_paginate(__MODULE__, per_page, opts)
       end
 
       def chunk(size, fun) when is_integer(size) and is_function(fun, 1) do
@@ -337,14 +273,31 @@ defmodule Laravex.Database.Model do
         {:has_one, name, related, foreign_key}
       end
 
-      def belongs_to(name, related, foreign_key \\ nil) do
+      def belongs_to(name, related, foreign_key \\ nil, opts \\ []) do
         foreign_key = foreign_key || to_string(name) <> "_id"
-        {:belongs_to, name, related, foreign_key}
+
+        case Keyword.get(opts, :with_default) do
+          nil -> {:belongs_to, name, related, foreign_key}
+          default -> {:belongs_to, name, related, foreign_key, default}
+        end
       end
 
-      def belongs_to_many(name, related, pivot \\ nil, foreign_pivot_key \\ nil, related_pivot_key \\ nil) do
+      def belongs_to_many(name, related, pivot \\ nil, foreign_pivot_key \\ nil, related_pivot_key_or_opts \\ nil, opts \\ []) do
         owner_base = Macro.underscore(__MODULE__ |> Module.split() |> List.last())
         related_base = Macro.underscore(related |> Module.split() |> List.last())
+
+        {related_pivot_key, opts} =
+          cond do
+            is_list(related_pivot_key_or_opts) and related_pivot_key_or_opts != [] and
+                Keyword.keyword?(related_pivot_key_or_opts) ->
+              {nil, related_pivot_key_or_opts}
+
+            is_binary(related_pivot_key_or_opts) ->
+              {related_pivot_key_or_opts, opts}
+
+            true ->
+              {nil, opts}
+          end
 
         pivot =
           pivot ||
@@ -354,8 +307,56 @@ defmodule Laravex.Database.Model do
 
         foreign_pivot_key = foreign_pivot_key || owner_base <> "_id"
         related_pivot_key = related_pivot_key || related_base <> "_id"
+        pivot_cols = Keyword.get(opts, :with_pivot, [])
+        with_ts = Keyword.get(opts, :with_timestamps, true)
 
-        {:belongs_to_many, name, related, pivot, foreign_pivot_key, related_pivot_key}
+        {:belongs_to_many, name, related, pivot, foreign_pivot_key, related_pivot_key, pivot_cols,
+         with_ts}
+      end
+
+      def morph_many(name, related, morph_name \\ "morph", morph_type \\ nil) do
+        {:morph_many, name, related, to_string(morph_name), morph_type}
+      end
+
+      def morph_one(name, related, morph_name \\ "morph", morph_type \\ nil) do
+        {:morph_one, name, related, to_string(morph_name), morph_type}
+      end
+
+      def morph_to(name, morph_name \\ nil) do
+        morph = morph_name || to_string(name)
+        {:morph_to, name, to_string(morph), nil}
+      end
+
+      def morph_to_many(name, related, pivot \\ nil, morph_name \\ "morph", related_key \\ nil) do
+        related_base = Macro.underscore(related |> Module.split() |> List.last())
+        owner_base = Macro.underscore(__MODULE__ |> Module.split() |> List.last())
+
+        pivot =
+          pivot ||
+            [owner_base, related_base]
+            |> Enum.sort()
+            |> Enum.join("_")
+
+        related_key = related_key || related_base <> "_id"
+        {:morph_to_many, name, related, pivot, to_string(morph_name), related_key, nil}
+      end
+
+      def has_many_through(name, related, through, foreign_key \\ nil, second_key \\ nil) do
+        owner_base = Macro.underscore(__MODULE__ |> Module.split() |> List.last())
+        through_base = Macro.underscore(through |> Module.split() |> List.last())
+
+        foreign_key = foreign_key || owner_base <> "_id"
+        second_key = second_key || through_base <> "_id"
+        {:has_many_through, name, related, through, foreign_key, second_key}
+      end
+
+      def has_one_through(name, related, through, foreign_key \\ nil, second_key \\ nil) do
+        owner_base = Macro.underscore(__MODULE__ |> Module.split() |> List.last())
+        through_base = Macro.underscore(through |> Module.split() |> List.last())
+
+        foreign_key = foreign_key || owner_base <> "_id"
+        second_key = second_key || through_base <> "_id"
+        {:has_one_through, name, related, through, foreign_key, second_key}
       end
 
       def load(%__MODULE__{} = model, relation_name)
@@ -423,11 +424,200 @@ defmodule Laravex.Database.Model do
         Laravex.Database.Model.to_map(model)
       end
 
+      def make_hidden(%__MODULE__{} = model, attrs) do
+        Laravex.Database.Model.make_hidden(model, attrs)
+      end
+
+      def make_visible(%__MODULE__{} = model, attrs) do
+        Laravex.Database.Model.make_visible(model, attrs)
+      end
+
       def touch(%__MODULE__{} = model, attr \\ "updated_at") do
         Laravex.Database.Model.touch(model, attr)
       end
 
       defoverridable new: 0, new: 1, find_by_email: 1
+    end
+  end
+
+  @lifecycle_events ~w(creating created updating updated deleting deleted restoring restored)a
+
+  def without_events(fun) when is_function(fun, 0) do
+    prev = Process.get(:laravex_without_events)
+
+    try do
+      Process.put(:laravex_without_events, true)
+      fun.()
+    after
+      case prev do
+        nil -> Process.delete(:laravex_without_events)
+        v -> Process.put(:laravex_without_events, v)
+      end
+    end
+  end
+
+  def without_events?, do: truthy?(Process.get(:laravex_without_events))
+
+  def prevent_lazy_loading?, do: truthy?(Process.get(:laravex_prevent_lazy_loading, Application.get_env(:laravex, :prevent_lazy_loading, false)))
+
+  defp truthy?(v) when v in [false, nil, 0, "", "0"], do: false
+  defp truthy?(_), do: true
+
+  def perform_create(mod, attrs) when is_map(attrs) do
+    model = mod.new(attrs)
+    fire_before(mod, :creating, model)
+
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    row =
+      model
+      |> Map.from_struct()
+      |> Map.drop([:__struct__, :id])
+      |> Enum.reject(fn {k, v} -> is_nil(v) or k in [:__relations__] end)
+      |> Map.new(fn {k, v} -> {to_string(k), v} end)
+      |> Map.put("created_at", now)
+      |> Map.put("updated_at", now)
+
+    id = Laravex.Database.Query.insert(mod.table_name(), row)
+
+    created =
+      mod.find(id)
+      |> case do
+        nil -> model |> Map.put(:id, id)
+        found -> found
+      end
+
+    fire_after(mod, :created, created)
+    created
+  end
+
+  def perform_save(mod, %{id: nil} = model) do
+    attrs =
+      model
+      |> Map.from_struct()
+      |> Map.drop([:__struct__, :id, :__relations__])
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+      |> Map.new(fn {k, v} -> {to_string(k), v} end)
+
+    perform_create(mod, attrs)
+  end
+
+  def perform_save(mod, %{id: id} = model) do
+    fire_before(mod, :updating, model)
+
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+    changes = get_changes(model)
+
+    attrs =
+      if map_size(changes) == 0 do
+        %{"updated_at" => now}
+      else
+        changes
+        |> Map.new(fn {k, v} -> {to_string(k), v} end)
+        |> then(&apply_mutators(mod, &1))
+        |> then(&apply_persist_casts(&1, mod))
+        |> Map.put("updated_at", now)
+      end
+
+    Laravex.Database.Query.table(mod.table_name())
+    |> Laravex.Database.Query.where("id", id)
+    |> Laravex.Database.Query.update(attrs)
+
+    saved = mod.find(id, with_trashed: true)
+
+    result =
+      if saved do
+        saved
+        |> sync_was_changed(changes)
+        |> touch_parents()
+      else
+        saved
+      end
+
+    if result, do: fire_after(mod, :updated, result)
+    result
+  end
+
+  def perform_delete(mod, model, soft_deletes?) do
+    fire_before(mod, :deleting, model)
+
+    result =
+      if soft_deletes? do
+        now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+        Laravex.Database.Query.table(mod.table_name())
+        |> Laravex.Database.Query.where("id", model.id)
+        |> Laravex.Database.Query.update(%{"deleted_at" => now})
+
+        :ok
+      else
+        perform_force_delete(mod, model)
+      end
+
+    if soft_deletes?, do: fire_after(mod, :deleted, model)
+    result
+  end
+
+  def perform_force_delete(mod, %{id: id} = model) do
+    fire_before(mod, :deleting, model)
+
+    Laravex.Database.Query.table(mod.table_name())
+    |> Laravex.Database.Query.where("id", id)
+    |> Laravex.Database.Query.delete()
+
+    fire_after(mod, :deleted, model)
+    :ok
+  end
+
+  def perform_restore(mod, model, soft_deletes?) do
+    fire_before(mod, :restoring, model)
+
+    result =
+      if soft_deletes? do
+        Laravex.Database.Query.table(mod.table_name())
+        |> Laravex.Database.Query.where("id", model.id)
+        |> Laravex.Database.Query.update(%{"deleted_at" => nil})
+
+        mod.find(model.id)
+      else
+        mod.find(model.id)
+      end
+
+    if result, do: fire_after(mod, :restored, result)
+    result
+  end
+
+  defp fire_before(mod, event, model) when event in @lifecycle_events do
+    unless without_events?() do
+      run_observers(mod, event, model)
+      Laravex.Events.Dispatcher.dispatch(event, %{model: model, module: mod})
+    end
+
+    :ok
+  end
+
+  defp fire_after(mod, event, model) when event in @lifecycle_events do
+    unless without_events?() do
+      run_observers(mod, event, model)
+      Laravex.Events.Dispatcher.dispatch(event, %{model: model, module: mod})
+    end
+
+    model
+  end
+
+  defp run_observers(mod, event, model) do
+    Enum.each(observers_for(mod), fn observer ->
+      if Code.ensure_loaded?(observer) and function_exported?(observer, event, 1) do
+        apply(observer, event, [model])
+      end
+    end)
+  end
+
+  defp observers_for(mod) do
+    cond do
+      function_exported?(mod, :__observers__, 0) -> List.wrap(mod.__observers__())
+      function_exported?(mod, :observes, 0) -> List.wrap(mod.observes())
+      true -> []
     end
   end
 
@@ -493,6 +683,16 @@ defmodule Laravex.Database.Model do
     }
 
     Map.put(pager, :links, Laravex.Http.Paginator.links(pager, path))
+  end
+
+  def cursor_paginate(mod, per_page, opts \\ []) when is_integer(per_page) and per_page > 0 do
+    q = mod.query(opts)
+    page = Laravex.Database.Query.cursor_paginate(q, per_page, opts)
+
+    %{
+      page
+      | data: Enum.map(page.data, &mod.from_row/1)
+    }
   end
 
   def simple_paginate(mod, per_page, page, opts \\ []) when page >= 1 do
@@ -568,12 +768,52 @@ defmodule Laravex.Database.Model do
       {:belongs_to, _n, related, fk} ->
         exists_belongs_to(owner_table, related, fk, constraint)
 
+      {:belongs_to_many, _n, related, pivot, fk, rk, _pc, _wt} ->
+        exists_belongs_to_many(owner_table, related, pivot, fk, rk, constraint)
+
       {:belongs_to_many, _n, related, pivot, fk, rk} ->
         exists_belongs_to_many(owner_table, related, pivot, fk, rk, constraint)
+
+      {:morph_many, _n, related, morph_name, morph_type} ->
+        exists_morph(owner_table, related, morph_name, morph_type, constraint, owner_mod)
+
+      {:morph_one, _n, related, morph_name, morph_type} ->
+        exists_morph(owner_table, related, morph_name, morph_type, constraint, owner_mod)
+
+      {:has_many_through, _n, related, through, fk, sk} ->
+        exists_has_many_through(owner_table, related, through, fk, sk, constraint)
+
+      {:has_one_through, _n, related, through, fk, sk} ->
+        exists_has_many_through(owner_table, related, through, fk, sk, constraint)
 
       _ ->
         raise ArgumentError, "Unknown relation #{inspect(relation)} on #{inspect(owner_mod)}"
     end
+  end
+
+  defp exists_morph(owner_table, related, morph_name, morph_type, constraint, owner_mod) do
+    related_table = related.table_name()
+    type_col = "#{morph_name}_type"
+    id_col = "#{morph_name}_id"
+    type_value = morph_type || Laravex.Eloquex.Relation.morph_type(owner_mod)
+    {extra, bindings} = constraint_where(related, constraint)
+    base = "#{related_table}.#{id_col} = #{owner_table}.id AND #{related_table}.#{type_col} = ?"
+    sql = "SELECT 1 FROM #{related_table} WHERE #{base}#{extra_and(extra)}"
+    {sql, [type_value | bindings]}
+  end
+
+  defp exists_has_many_through(owner_table, related, through, fk, sk, constraint) do
+    related_table = related.table_name()
+    through_table = through.table_name()
+    {extra, bindings} = constraint_where(related, constraint)
+
+    base =
+      "#{through_table}.#{fk} = #{owner_table}.id AND #{related_table}.#{sk} = #{through_table}.id"
+
+    sql =
+      "SELECT 1 FROM #{related_table} INNER JOIN #{through_table} ON #{through_table}.id = #{related_table}.#{sk} WHERE #{base}#{extra_and(extra)}"
+
+    {sql, bindings}
   end
 
   defp exists_has(owner_table, related, fk, constraint) do
@@ -619,10 +859,19 @@ defmodule Laravex.Database.Model do
   defp extra_and(sql) when is_binary(sql), do: " AND #{sql}"
 
   def with_relations(models, owner_mod, relations) do
-    rels = List.wrap(relations)
+    relations
+    |> List.wrap()
+    |> normalize_with_specs()
+    |> Enum.reduce(models, fn {rel_name, constraint}, acc ->
+      batch_load_relation(acc, owner_mod, rel_name, constraint: constraint)
+    end)
+  end
 
-    Enum.reduce(rels, models, fn rel, acc ->
-      batch_load_relation(acc, owner_mod, rel)
+  defp normalize_with_specs(relations) do
+    Enum.map(relations, fn
+      {name, fun} when is_function(fun, 1) -> {to_string(name), fun}
+      {name, nil} -> {to_string(name), nil}
+      name when is_atom(name) or is_binary(name) -> {to_string(name), nil}
     end)
   end
 
@@ -685,6 +934,7 @@ defmodule Laravex.Database.Model do
   def batch_load_relation(models, owner_mod, relation_name, opts) do
     relation_name = to_string(relation_name)
     query_opts = Keyword.take(opts, [:with_trashed, :only_trashed])
+    constraint = Keyword.get(opts, :constraint)
     rel_def = relation_def(owner_mod, relation_name)
 
     case rel_def do
@@ -697,6 +947,7 @@ defmodule Laravex.Database.Model do
           else
             related.query(query_opts)
             |> Laravex.Database.Query.where_in(fk, ids)
+            |> apply_constraint(related, constraint)
             |> Laravex.Database.Query.get()
             |> Enum.map(&related.from_row/1)
             |> Enum.group_by(fn row -> Map.get(row, String.to_atom(fk)) end)
@@ -715,6 +966,7 @@ defmodule Laravex.Database.Model do
           else
             related.query(query_opts)
             |> Laravex.Database.Query.where_in(fk, ids)
+            |> apply_constraint(related, constraint)
             |> Laravex.Database.Query.get()
             |> Enum.map(&related.from_row/1)
             |> Enum.reduce(%{}, fn row, acc ->
@@ -728,73 +980,369 @@ defmodule Laravex.Database.Model do
         end)
 
       {:belongs_to, _name, related, fk} ->
-        fk_atom = String.to_atom(fk)
+        batch_load_belongs_to(models, relation_name, related, fk, query_opts, nil)
 
-        parent_ids =
-          models
-          |> Enum.map(&Map.get(&1, fk_atom))
-          |> Enum.reject(&is_nil/1)
-          |> Enum.uniq()
+      {:belongs_to, _name, related, fk, default} ->
+        batch_load_belongs_to(models, relation_name, related, fk, query_opts, default)
 
-        by_id =
-          if parent_ids == [] do
-            %{}
-          else
-            related.query(query_opts)
-            |> Laravex.Database.Query.where_in("id", parent_ids)
-            |> Laravex.Database.Query.get()
-            |> Enum.map(&related.from_row/1)
-            |> Map.new(fn row -> {row.id, row} end)
-          end
-
-        Enum.map(models, fn model ->
-          put_loaded(model, relation_name, Map.get(by_id, Map.get(model, fk_atom)))
-        end)
+      {:belongs_to_many, _name, related, pivot, fk, rk, pivot_cols, _with_ts} ->
+        batch_load_belongs_to_many(models, relation_name, related, pivot, fk, rk, pivot_cols, query_opts)
 
       {:belongs_to_many, _name, related, pivot, fk, rk} ->
-        ids = Enum.map(models, & &1.id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+        batch_load_belongs_to_many(models, relation_name, related, pivot, fk, rk, [], query_opts)
 
-        pivot_rows =
-          if ids == [] do
-            []
-          else
-            Laravex.Database.Query.table(pivot)
-            |> Laravex.Database.Query.where_in(fk, ids)
-            |> Laravex.Database.Query.get()
+      {:morph_many, _name, related, morph_name, morph_type} ->
+        batch_load_morph_many(models, owner_mod, relation_name, related, morph_name, morph_type, query_opts, constraint)
+
+      {:morph_one, _name, related, morph_name, morph_type} ->
+        models
+        |> batch_load_morph_many(
+          owner_mod,
+          relation_name,
+          related,
+          morph_name,
+          morph_type,
+          query_opts,
+          constraint
+        )
+        |> Enum.map(fn model ->
+          case get_relation(model, relation_name) do
+            [row | _] -> put_loaded(model, relation_name, row)
+            _ -> put_loaded(model, relation_name, nil)
           end
+        end)
 
-        related_ids =
-          pivot_rows
-          |> Enum.map(fn row -> Map.get(row, rk) || Map.get(row, String.to_atom(rk)) end)
-          |> Enum.reject(&is_nil/1)
-          |> Enum.uniq()
+      {:morph_to, _name, morph_name, _} ->
+        batch_load_morph_to(models, relation_name, morph_name, query_opts)
 
-        by_related =
-          if related_ids == [] do
-            %{}
-          else
-            related.query(query_opts)
-            |> Laravex.Database.Query.where_in("id", related_ids)
-            |> Laravex.Database.Query.get()
-            |> Enum.map(&related.from_row/1)
-            |> Map.new(fn row -> {row.id, row} end)
+      {:morph_to_many, _name, related, pivot, morph_name, rk, morph_type} ->
+        batch_load_morph_to_many(
+          models,
+          owner_mod,
+          relation_name,
+          related,
+          pivot,
+          morph_name,
+          rk,
+          morph_type,
+          query_opts
+        )
+
+      {:has_many_through, _name, related, through, fk, sk} ->
+        batch_load_has_many_through(models, relation_name, related, through, fk, sk, query_opts, constraint)
+
+      {:has_one_through, _name, related, through, fk, sk} ->
+        models
+        |> batch_load_has_many_through(
+          relation_name,
+          related,
+          through,
+          fk,
+          sk,
+          query_opts,
+          constraint
+        )
+        |> Enum.map(fn model ->
+          case get_relation(model, relation_name) do
+            [row | _] -> put_loaded(model, relation_name, row)
+            rows when is_list(rows) -> put_loaded(model, relation_name, List.first(rows))
+            row -> put_loaded(model, relation_name, row)
           end
-
-        grouped =
-          Enum.reduce(pivot_rows, %{}, fn row, acc ->
-            owner_id = Map.get(row, fk) || Map.get(row, String.to_atom(fk))
-            related_id = Map.get(row, rk) || Map.get(row, String.to_atom(rk))
-            child = Map.get(by_related, related_id)
-            if owner_id && child, do: Map.update(acc, owner_id, [child], &(&1 ++ [child])), else: acc
-          end)
-
-        Enum.map(models, fn model ->
-          put_loaded(model, relation_name, Map.get(grouped, model.id, []))
         end)
 
       _ ->
         models
     end
+  end
+
+  defp apply_constraint(q, _related, nil), do: q
+  defp apply_constraint(q, _related, fun) when is_function(fun, 1), do: fun.(q)
+
+  defp batch_load_belongs_to(models, relation_name, related, fk, query_opts, default) do
+    fk_atom = String.to_atom(fk)
+
+    parent_ids =
+      models
+      |> Enum.map(&Map.get(&1, fk_atom))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    by_id =
+      if parent_ids == [] do
+        %{}
+      else
+        related.query(query_opts)
+        |> Laravex.Database.Query.where_in("id", parent_ids)
+        |> Laravex.Database.Query.get()
+        |> Enum.map(&related.from_row/1)
+        |> Map.new(fn row -> {row.id, row} end)
+      end
+
+    default_value =
+      cond do
+        is_function(default, 0) -> default.()
+        match?(%_{}, default) -> default
+        true -> default
+      end
+
+    Enum.map(models, fn model ->
+      parent_id = Map.get(model, fk_atom)
+
+      value =
+        if parent_id do
+          Map.get(by_id, parent_id) || default_value
+        else
+          default_value
+        end
+
+      put_loaded(model, relation_name, value)
+    end)
+  end
+
+  defp batch_load_belongs_to_many(models, relation_name, related, pivot, fk, rk, pivot_cols, query_opts) do
+    pivot_cols = Enum.map(List.wrap(pivot_cols), &to_string/1)
+    ids = Enum.map(models, & &1.id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+    pivot_rows =
+      if ids == [] do
+        []
+      else
+        Laravex.Database.Query.table(pivot)
+        |> Laravex.Database.Query.where_in(fk, ids)
+        |> Laravex.Database.Query.get()
+      end
+
+    related_ids =
+      pivot_rows
+      |> Enum.map(fn row -> Map.get(row, rk) || Map.get(row, String.to_atom(rk)) end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    by_related =
+      if related_ids == [] do
+        %{}
+      else
+        related.query(query_opts)
+        |> Laravex.Database.Query.where_in("id", related_ids)
+        |> Laravex.Database.Query.get()
+        |> Enum.map(&related.from_row/1)
+        |> Map.new(fn row -> {row.id, row} end)
+      end
+
+    grouped =
+      Enum.reduce(pivot_rows, %{}, fn row, acc ->
+        owner_id = Map.get(row, fk) || Map.get(row, String.to_atom(fk))
+        related_id = Map.get(row, rk) || Map.get(row, String.to_atom(rk))
+        child = Map.get(by_related, related_id)
+
+        if owner_id && child do
+          if pivot_cols != [] do
+            pivot_data =
+              pivot_cols
+              |> Enum.map(fn col -> {col, Map.get(row, col) || Map.get(row, String.to_atom(col))} end)
+              |> Map.new()
+
+            Process.put(relation_key_by_owner(owner_id, relation_name, related_id), pivot_data)
+          end
+
+          Map.update(acc, owner_id, [child], &(&1 ++ [child]))
+        else
+          acc
+        end
+      end)
+
+    Enum.map(models, fn model ->
+      put_loaded(model, relation_name, Map.get(grouped, model.id, []))
+    end)
+  end
+
+  defp relation_key_by_owner(owner_id, relation_name, related_id) do
+    {:laravex_pivot, owner_id, to_string(relation_name), related_id}
+  end
+
+  defp batch_load_morph_many(models, owner_mod, relation_name, related, morph_name, morph_type, query_opts, constraint) do
+    type_col = "#{morph_name}_type"
+    id_col = "#{morph_name}_id"
+    ids = Enum.map(models, & &1.id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+    grouped =
+      if ids == [] do
+        %{}
+      else
+        related.query(query_opts)
+        |> Laravex.Database.Query.where_in(id_col, ids)
+        |> apply_constraint(related, constraint)
+        |> Laravex.Database.Query.get()
+        |> Enum.map(&related.from_row/1)
+        |> Enum.filter(fn row ->
+          stored_type = Map.get(row, String.to_atom(type_col))
+
+          if morph_type do
+            to_string(stored_type) == to_string(morph_type)
+          else
+            true
+          end
+        end)
+        |> Enum.group_by(fn row ->
+          Map.get(row, String.to_atom(id_col))
+        end)
+      end
+
+    Enum.map(models, fn model ->
+      type_value = morph_type || Laravex.Eloquex.Relation.morph_type(owner_mod)
+
+      children =
+        Map.get(grouped, model.id, [])
+        |> Enum.filter(fn row ->
+          stored = Map.get(row, String.to_atom(type_col))
+          to_string(stored) == to_string(type_value)
+        end)
+
+      put_loaded(model, relation_name, children)
+    end)
+  end
+
+  defp batch_load_morph_to(models, relation_name, morph_name, query_opts) do
+    type_col = String.to_atom("#{morph_name}_type")
+    id_col = String.to_atom("#{morph_name}_id")
+
+    targets =
+      models
+      |> Enum.map(fn model ->
+        type = Map.get(model, type_col)
+        id = Map.get(model, id_col)
+        if type && id, do: {model.id, to_string(type), id}, else: nil
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    by_type =
+      Enum.group_by(targets, fn {_mid, type, _id} -> type end, fn {_mid, _type, id} -> id end)
+
+    loaded =
+      Enum.reduce(by_type, %{}, fn {type, type_ids}, acc ->
+        case Laravex.Eloquex.Relation.resolve_morph_model(type) do
+          mod when is_atom(mod) ->
+            ids = Enum.uniq(type_ids)
+
+            rows =
+              mod.query(query_opts)
+              |> Laravex.Database.Query.where_in("id", ids)
+              |> Laravex.Database.Query.get()
+              |> Enum.map(&mod.from_row/1)
+              |> Map.new(fn row -> {row.id, row} end)
+
+            Map.merge(acc, rows)
+
+          _ ->
+            acc
+        end
+      end)
+
+    Enum.map(models, fn model ->
+      type = Map.get(model, type_col)
+      id = Map.get(model, id_col)
+      value = if type && id, do: Map.get(loaded, id), else: nil
+      put_loaded(model, relation_name, value)
+    end)
+  end
+
+  defp batch_load_morph_to_many(models, owner_mod, relation_name, related, pivot, morph_name, rk, morph_type, query_opts) do
+    type_col = "#{morph_name}_type"
+    id_col = "#{morph_name}_id"
+    ids = Enum.map(models, & &1.id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+    morph = morph_type || Laravex.Eloquex.Relation.morph_type(owner_mod)
+
+    pivot_rows =
+      if ids == [] do
+        []
+      else
+        Laravex.Database.Query.table(pivot)
+        |> Laravex.Database.Query.where(type_col, morph)
+        |> Laravex.Database.Query.where_in(id_col, ids)
+        |> Laravex.Database.Query.get()
+      end
+
+    related_ids =
+      pivot_rows
+      |> Enum.map(fn row -> Map.get(row, rk) || Map.get(row, String.to_atom(rk)) end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    by_related =
+      if related_ids == [] do
+        %{}
+      else
+        related.query(query_opts)
+        |> Laravex.Database.Query.where_in("id", related_ids)
+        |> Laravex.Database.Query.get()
+        |> Enum.map(&related.from_row/1)
+        |> Map.new(fn row -> {row.id, row} end)
+      end
+
+    grouped =
+      Enum.reduce(pivot_rows, %{}, fn row, acc ->
+        owner_id = Map.get(row, id_col) || Map.get(row, String.to_atom(id_col))
+        related_id = Map.get(row, rk) || Map.get(row, String.to_atom(rk))
+        child = Map.get(by_related, related_id)
+        if owner_id && child, do: Map.update(acc, owner_id, [child], &(&1 ++ [child])), else: acc
+      end)
+
+    Enum.map(models, fn model ->
+      put_loaded(model, relation_name, Map.get(grouped, model.id, []))
+    end)
+  end
+
+  defp batch_load_has_many_through(models, relation_name, related, through, fk, sk, query_opts, constraint) do
+    ids = Enum.map(models, & &1.id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+    through_rows =
+      if ids == [] do
+        []
+      else
+        through.query()
+        |> Laravex.Database.Query.where_in(fk, ids)
+        |> Laravex.Database.Query.get()
+      end
+
+    through_by_owner =
+      Enum.reduce(through_rows, %{}, fn row, acc ->
+        owner_id = Map.get(row, fk) || Map.get(row, String.to_atom(fk))
+        Map.update(acc, owner_id, [row], &(&1 ++ [row]))
+      end)
+
+    through_ids =
+      through_rows
+      |> Enum.map(fn row -> Map.get(row, "id") || Map.get(row, :id) end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    related_rows =
+      if through_ids == [] do
+        []
+      else
+        related.query(query_opts)
+        |> Laravex.Database.Query.where_in(sk, through_ids)
+        |> apply_constraint(related, constraint)
+        |> Laravex.Database.Query.get()
+        |> Enum.map(&related.from_row/1)
+      end
+
+    related_by_through =
+      Enum.reduce(related_rows, %{}, fn row, acc ->
+        through_id = Map.get(row, String.to_atom(sk))
+        Map.update(acc, through_id, [row], &(&1 ++ [row]))
+      end)
+
+    Enum.map(models, fn model ->
+      children =
+        (Map.get(through_by_owner, model.id, [])
+         |> Enum.flat_map(fn through_row ->
+           through_id = Map.get(through_row, "id") || Map.get(through_row, :id)
+           Map.get(related_by_through, through_id, [])
+         end))
+
+      put_loaded(model, relation_name, children)
+    end)
   end
 
   def batch_count_relation(models, owner_mod, relation_name) do
@@ -823,13 +1371,26 @@ defmodule Laravex.Database.Model do
             Map.put_new(acc, owner_id, 1)
           end)
 
+        {:belongs_to_many, _n, _related, pivot, fk, _rk, _, _} when ids != [] ->
+          pivot_count(pivot, fk, ids)
+
         {:belongs_to_many, _n, _related, pivot, fk, _rk} when ids != [] ->
-          Laravex.Database.Query.table(pivot)
-          |> Laravex.Database.Query.where_in(fk, ids)
+          pivot_count(pivot, fk, ids)
+
+        {:morph_many, _n, related, morph_name, morph_type} when ids != [] ->
+          type_col = "#{morph_name}_type"
+          id_col = "#{morph_name}_id"
+
+          related.query()
+          |> Laravex.Database.Query.where_in(id_col, ids)
           |> Laravex.Database.Query.get()
           |> Enum.reduce(%{}, fn row, acc ->
-            owner_id = Map.get(row, fk) || Map.get(row, String.to_atom(fk))
-            Map.update(acc, owner_id, 1, &(&1 + 1))
+            if morph_type && Map.get(row, type_col) != morph_type do
+              acc
+            else
+              owner_id = Map.get(row, id_col) || Map.get(row, String.to_atom(id_col))
+              Map.update(acc, owner_id, 1, &(&1 + 1))
+            end
           end)
 
         _ ->
@@ -944,8 +1505,29 @@ defmodule Laravex.Database.Model do
       relation_loaded?(model, key) ->
         get_relation(model, key)
 
+      relation_defined?(mod, key) ->
+        if prevent_lazy_loading?() do
+          raise Laravex.Database.LazyLoadingViolationException, model: model, relation: key
+        else
+          nil
+        end
+
       true ->
         nil
+    end
+  end
+
+  defp relation_defined?(mod, key) do
+    key = to_string(key)
+
+    if function_exported?(mod, :relations, 0) do
+      mod.relations()
+      |> Enum.any?(fn
+        tup when is_tuple(tup) and tuple_size(tup) >= 2 -> to_string(elem(tup, 1)) == key
+        _ -> false
+      end)
+    else
+      false
     end
   end
 
@@ -1092,9 +1674,33 @@ defmodule Laravex.Database.Model do
     end
   end
 
+  def make_hidden(model, attrs) do
+    attrs = List.wrap(attrs) |> Enum.map(&to_string/1)
+    key = serialization_key(model)
+    %{hidden: hidden, visible: visible} = Process.get(key, %{hidden: [], visible: []})
+    _ = Process.put(key, %{hidden: hidden ++ attrs, visible: visible})
+    model
+  end
+
+  def make_visible(model, attrs) do
+    attrs = List.wrap(attrs) |> Enum.map(&to_string/1)
+    key = serialization_key(model)
+    %{hidden: hidden, visible: visible} = Process.get(key, %{hidden: [], visible: []})
+    _ = Process.put(key, %{hidden: hidden, visible: visible ++ attrs})
+    model
+  end
+
   def to_map(model) do
     mod = model.__struct__
-    hidden = if function_exported?(mod, :hidden, 0), do: Enum.map(mod.hidden(), &to_string/1), else: []
+    base_hidden = if function_exported?(mod, :hidden, 0), do: Enum.map(mod.hidden(), &to_string/1), else: []
+    %{hidden: extra_hidden, visible: extra_visible} =
+      Process.get(serialization_key(model), %{hidden: [], visible: []})
+
+    hidden =
+      (base_hidden ++ extra_hidden)
+      |> Enum.uniq()
+      |> Enum.reject(&(&1 in extra_visible))
+
     appends = if function_exported?(mod, :appends, 0), do: mod.appends(), else: []
 
     base =
@@ -1109,6 +1715,8 @@ defmodule Laravex.Database.Model do
   end
 
   defp original_key(model), do: {:laravex_original, model.__struct__, Map.get(model, :id)}
+
+  defp serialization_key(model), do: {:laravex_serialization, model.__struct__, Map.get(model, :id)}
 
   defp was_changed_key(model), do: {:laravex_was_changed, model.__struct__, Map.get(model, :id)}
 
@@ -1185,4 +1793,31 @@ defmodule Laravex.Database.Model do
   defp cast_one(:json, nil), do: nil
 
   defp cast_one(_, v), do: v
+
+  defp pivot_count(pivot, fk, ids) do
+    Laravex.Database.Query.table(pivot)
+    |> Laravex.Database.Query.where_in(fk, ids)
+    |> Laravex.Database.Query.get()
+    |> Enum.reduce(%{}, fn row, acc ->
+      owner_id = Map.get(row, fk) || Map.get(row, String.to_atom(fk))
+      Map.update(acc, owner_id, 1, &(&1 + 1))
+    end)
+  end
+end
+
+defmodule Laravex.Database.LazyLoadingViolationException do
+  @moduledoc "Raised when lazy loading is prevented and a relation is accessed without eager loading."
+  defexception [:message, :model, :relation]
+
+  @impl true
+  def exception(opts) do
+    relation = Keyword.fetch!(opts, :relation)
+    model = Keyword.get(opts, :model)
+
+    %__MODULE__{
+      message: "lazy loading relation #{inspect(relation)} on #{inspect(model)} is not allowed",
+      model: model,
+      relation: relation
+    }
+  end
 end

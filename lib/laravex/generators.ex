@@ -348,6 +348,90 @@ defmodule Laravex.Generators do
     """)
   end
 
+  def make_view(name) do
+    path = view_path(name)
+
+    File.mkdir_p!(Path.dirname(path))
+
+    unless File.exists?(path) do
+      File.write!(path, default_view_contents(name))
+      IO.puts("View created: #{path}")
+    else
+      IO.puts(:stderr, "View already exists: #{path}")
+    end
+
+    :ok
+  end
+
+  def make_test(name, opts \\ []) do
+    unit? = Keyword.get(opts, :unit, false)
+    base_name = name |> String.replace_suffix("Test", "") |> Macro.camelize()
+    mod = "Tests.#{if unit?, do: "Unit", else: "Feature"}.#{base_name}Test"
+
+    dir =
+      Path.join([
+        Laravex.Foundation.Application.base_path(),
+        "tests",
+        if(unit?, do: "Unit", else: "Feature")
+      ])
+
+    path = Path.join(dir, Macro.underscore(base_name) <> "_test.exs")
+    File.mkdir_p!(dir)
+
+    File.write!(path, """
+    defmodule #{mod} do
+      use Laravex.TestCase, async: false
+
+      test "example" do
+        assert true
+      end
+    end
+    """)
+
+    IO.puts("Test created: #{path}")
+    :ok
+  end
+
+  def make_observer(name) do
+    model = String.replace_suffix(name, "Observer", "")
+    stub("Observers", name, """
+    defmodule App.Observers.#{name} do
+      @moduledoc "Eloquex observer for App.Models.#{model}."
+
+      def creating(_model), do: :ok
+      def created(_model), do: :ok
+      def updating(_model), do: :ok
+      def updated(_model), do: :ok
+      def saving(_model), do: :ok
+      def saved(_model), do: :ok
+      def deleting(_model), do: :ok
+      def deleted(_model), do: :ok
+    end
+    """)
+  end
+
+  def make_enum(name) do
+    stub("Enums", name, """
+    defmodule App.Enums.#{name} do
+      @moduledoc "Application enum (Laravel-style backed enum lite)."
+
+      @values ~w(pending active completed)
+
+      def values, do: @values
+
+      def valid?(value), do: to_string(value) in @values
+
+      def cast(value) when value in @values, do: value
+
+      def cast(value) when is_binary(value) do
+        if value in @values, do: value, else: nil
+      end
+
+      def cast(_), do: nil
+    end
+    """)
+  end
+
   def make_provider(name) do
     stub("Providers", name, """
     defmodule App.Providers.#{name} do
@@ -398,6 +482,26 @@ defmodule Laravex.Generators do
     end
 
     :ok
+  end
+
+  defp view_path(name) do
+    rel =
+      name
+      |> Macro.underscore()
+      |> String.replace(".", "/")
+      |> then(fn p -> if String.ends_with?(p, ".blade.php"), do: p, else: p <> ".blade.php" end)
+
+    Path.join([Laravex.Foundation.Application.base_path(), "resources/views", rel])
+  end
+
+  defp default_view_contents(name) do
+    title = name |> Macro.underscore() |> String.replace("/", " — ")
+
+    """
+    <div>
+      <h1>#{title}</h1>
+    </div>
+    """
   end
 
   defp table_from_migration_name(name) do

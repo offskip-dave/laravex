@@ -42,7 +42,38 @@ defmodule Laravex.Http.Request do
   end
 
   def input(%__MODULE__{params: params}, key, default \\ nil) do
-    Map.get(params, key) || Map.get(params, to_string(key), default)
+    key = to_string(key)
+
+    cond do
+      String.contains?(key, ".") ->
+        case Laravex.Support.Helpers.data_get(params, key, :__missing__) do
+          :__missing__ -> default
+          value -> value
+        end
+
+      Map.has_key?(params, key) ->
+        Map.get(params, key)
+
+      Map.has_key?(params, String.to_atom(key)) ->
+        Map.get(params, String.to_atom(key))
+
+      true ->
+        default
+    end
+  end
+
+  @doc "Input with default (Laravel `Request::value` / Arr data_get)."
+  def value(%__MODULE__{} = request, key, default \\ nil), do: input(request, key, default)
+
+  @doc "Route parameter (Laravel `Request::route`)."
+  def route(request, key \\ nil, default \\ nil)
+
+  def route(%__MODULE__{route_params: params}, nil, _default), do: params || %{}
+
+  def route(%__MODULE__{route_params: params}, key, default) do
+    params = params || %{}
+    k = to_string(key)
+    Map.get(params, k) || Map.get(params, key, default)
   end
 
   def file(%__MODULE__{files: files}, key) do
@@ -89,7 +120,14 @@ defmodule Laravex.Http.Request do
 
   def has?(%__MODULE__{} = request, key) do
     k = to_string(key)
-    Map.has_key?(request.params, k) or Map.has_key?(request.params, key)
+
+    cond do
+      String.contains?(k, ".") ->
+        Laravex.Support.Helpers.data_get(request.params, k, :__missing__) != :__missing__
+
+      true ->
+        Map.has_key?(request.params, k) or Map.has_key?(request.params, key)
+    end
   end
 
   def has_any?(%__MODULE__{} = request, keys) when is_list(keys) do

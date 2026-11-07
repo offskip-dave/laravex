@@ -12,7 +12,7 @@ defmodule Laravex.Queue.Worker do
     {:ok, s}
   end
 
-  @supported_connections ~w(sync database deferred)
+  @supported_connections ~w(sync database deferred redis)
 
   def push(job_mod, args \\ [], opts \\ []) when is_atom(job_mod) do
     connection =
@@ -30,23 +30,20 @@ defmodule Laravex.Queue.Worker do
         true -> true
       end
 
-    cond do
-      connection == "sync" or not should_queue? ->
-        try do
-          result = dispatch_sync(job_mod, args)
-          record_batch(opts, :ok)
-          result
-        rescue
-          e ->
-            record_batch(opts, :failed)
-            reraise e, __STACKTRACE__
-        end
+    opts = Keyword.put(opts, :should_queue?, should_queue?)
+    Laravex.Queue.Resolver.module(connection).push(job_mod, args, opts)
+  end
 
-      connection == "deferred" ->
-        push_deferred(job_mod, args, opts)
-
-      connection == "database" ->
-        push_database(job_mod, args, opts)
+  @doc false
+  def push_sync(job_mod, args, opts) do
+    try do
+      result = dispatch_sync(job_mod, args)
+      record_batch(opts, :ok)
+      result
+    rescue
+      e ->
+        record_batch(opts, :failed)
+        reraise e, __STACKTRACE__
     end
   end
 
@@ -62,15 +59,18 @@ defmodule Laravex.Queue.Worker do
       raise ArgumentError,
             "Queue connection #{inspect(connection)} is unsupported. " <>
               "Supported connections: #{Enum.join(@supported_connections, ", ")} " <>
-              "(set QUEUE_CONNECTION=sync|database|deferred)."
+              "(set QUEUE_CONNECTION=sync|database|deferred|redis)."
     end
 
     :ok
   end
 
   def dispatch_sync(job_mod, args \\ []) do
-    job_mod.handle(List.wrap(args))
-    :ok
+    case run_job(job_mod, List.wrap(args)) do
+      {:skipped, _} -> :ok
+      :ok -> :ok
+      other -> other
+    end
   end
 
   def work(opts \\ []) do
@@ -79,7 +79,7 @@ defmodule Laravex.Queue.Worker do
     do_work(once)
   end
 
-  defp push_database(job_mod, args, opts) do
+  def push_database(job_mod, args, opts) do
     payload =
       %{
         "job" => Atom.to_string(job_mod),
@@ -109,7 +109,7 @@ defmodule Laravex.Queue.Worker do
     end
   end
 
-  defp push_deferred(job_mod, args, opts) do
+  def push_deferred(job_mod, args, opts) do
     ensure_deferred()
     delay = Keyword.get(opts, :delay, 0)
     available = System.system_time(:second) + delay
@@ -133,7 +133,7 @@ defmodule Laravex.Queue.Worker do
         :ets.delete(@deferred_table, id)
 
         try do
-          mod.handle(args)
+          run_job(mod, args)
         rescue
           e -> Laravex.Log.Logger.error("Deferred job failed: #{Exception.message(e)}")
         end
@@ -200,11 +200,25 @@ defmodule Laravex.Queue.Worker do
     try do
       job_mod = resolve_job_module(data["job"])
       args = decode_args(data["args"] || [])
-      result = job_mod.handle(args)
-      Laravex.Observability.record_job(job_mod, result)
-      Laravex.Database.Connection.execute("DELETE FROM jobs WHERE id = ?", [id])
-      Laravex.Bus.record_job_finished(data["batch_id"], :ok, id)
-      result
+
+      case run_job(job_mod, args) do
+        {:skipped, :duplicate} ->
+          Laravex.Database.Connection.execute("UPDATE jobs SET reserved_at = NULL WHERE id = ?", [id])
+
+        {:skipped, :retry_until} ->
+          Laravex.Database.Connection.execute("DELETE FROM jobs WHERE id = ?", [id])
+          Laravex.Bus.record_job_finished(data["batch_id"], :failed, id)
+
+        {:error, :timeout} = err ->
+          Laravex.Observability.record_job(job_mod, err)
+          fail(job, data, attempts, RuntimeError.exception("Job exceeded soft timeout"))
+
+        result ->
+          Laravex.Observability.record_job(job_mod, result)
+          Laravex.Database.Connection.execute("DELETE FROM jobs WHERE id = ?", [id])
+          Laravex.Bus.record_job_finished(data["batch_id"], :ok, id)
+          result
+      end
     rescue
       e ->
         Laravex.Observability.record_job(Map.get(data, "job"), {:error, Exception.message(e)})
@@ -267,8 +281,9 @@ defmodule Laravex.Queue.Worker do
 
   defp parse_int(_, default), do: default
 
-  defp encode_args(args) when is_list(args), do: Enum.map(args, &encode_arg/1)
-  defp encode_args(args), do: [encode_arg(args)]
+  @doc false
+  def encode_args(args) when is_list(args), do: Enum.map(args, &encode_arg/1)
+  def encode_args(args), do: [encode_arg(args)]
 
   defp encode_arg(arg)
        when is_binary(arg) or is_number(arg) or is_boolean(arg) or is_nil(arg) do
@@ -347,6 +362,103 @@ defmodule Laravex.Queue.Worker do
   rescue
     _ -> :ok
   end
+
+  defp run_job(job_mod, args) when is_atom(job_mod) do
+    if past_retry_until?(job_mod) do
+      {:skipped, :retry_until}
+    else
+      started_at = System.monotonic_time(:millisecond)
+
+      run =
+        if unique_job?(job_mod) do
+          lock = unique_lock(job_mod, args)
+
+          if Laravex.Cache.Manager.get_lock(lock) do
+            try do
+              execute_handle(job_mod, args, started_at)
+            after
+              Laravex.Cache.Manager.release(lock)
+            end
+          else
+            {:skipped, :duplicate}
+          end
+        else
+          execute_handle(job_mod, args, started_at)
+        end
+
+      run
+    end
+  end
+
+  defp execute_handle(job_mod, args, started_at) do
+    result = job_mod.handle(List.wrap(args))
+
+    case soft_timeout?(job_mod, started_at) do
+      true ->
+        Laravex.Log.Logger.warning("Job #{inspect(job_mod)} exceeded soft timeout/0 limit")
+        {:error, :timeout}
+
+      false ->
+        result
+    end
+  end
+
+  defp unique_job?(mod) do
+    function_exported?(mod, :unique_id, 1) or function_exported?(mod, :unique_for, 0)
+  end
+
+  defp unique_lock(job_mod, args) do
+    id =
+      if function_exported?(job_mod, :unique_id, 1) do
+        to_string(job_mod.unique_id(List.wrap(args)))
+      else
+        inspect(args)
+      end
+
+    seconds =
+      if function_exported?(job_mod, :unique_for, 0) do
+        job_mod.unique_for()
+      else
+        3600
+      end
+
+    Laravex.Cache.Manager.lock("laravex:unique_job:#{job_mod}:#{id}", seconds)
+  end
+
+  defp past_retry_until?(job_mod) do
+    if function_exported?(job_mod, :retry_until, 0) do
+      deadline = job_mod.retry_until()
+      now = System.system_time(:second)
+      deadline_ts = coerce_unix(deadline)
+      is_integer(deadline_ts) and now > deadline_ts
+    else
+      false
+    end
+  end
+
+  defp soft_timeout?(job_mod, started_at_ms) do
+    if function_exported?(job_mod, :timeout, 0) do
+      limit_sec = job_mod.timeout()
+      elapsed_ms = System.monotonic_time(:millisecond) - started_at_ms
+      is_integer(limit_sec) and limit_sec > 0 and elapsed_ms > limit_sec * 1000
+    else
+      false
+    end
+  end
+
+  defp coerce_unix(%DateTime{} = dt), do: DateTime.to_unix(dt)
+  defp coerce_unix(%NaiveDateTime{} = ndt), do: NaiveDateTime.diff(ndt, ~N[1970-01-01 00:00:00], :second)
+
+  defp coerce_unix(n) when is_integer(n), do: n
+
+  defp coerce_unix(s) when is_binary(s) do
+    case DateTime.from_iso8601(s) do
+      {:ok, dt, _} -> DateTime.to_unix(dt)
+      _ -> nil
+    end
+  end
+
+  defp coerce_unix(_), do: nil
 
   defp find_failed(id_or_uuid) do
     id = to_string(id_or_uuid)

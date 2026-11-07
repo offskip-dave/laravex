@@ -5,7 +5,33 @@ defmodule Laravex.Events.Dispatcher do
   def start_link(_ \\ []), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
 
   @impl true
-  def init(_), do: {:ok, %{listeners: %{}}}
+  def init(_), do: {:ok, default_state()}
+
+  defp default_state do
+    %{listeners: %{}, fake: false, fake_run_listeners: false, recorded: []}
+  end
+
+  @doc """
+  Fake event dispatch (Laravel `Event::fake`).
+
+  Dispatched events are recorded; listeners are skipped unless `run_listeners: true`.
+  """
+  def fake(opts \\ []) do
+    run? = Keyword.get(opts, :run_listeners, false)
+    GenServer.call(__MODULE__, {:fake, run?})
+  end
+
+  def dispatched, do: GenServer.call(__MODULE__, :dispatched)
+
+  def clear, do: GenServer.call(__MODULE__, :clear_recorded)
+
+  def assert_dispatched(fun) when is_function(fun, 1) do
+    Enum.any?(dispatched(), fun)
+  end
+
+  def assert_not_dispatched(fun) when is_function(fun, 1) do
+    not assert_dispatched(fun)
+  end
 
   def listen(event, listener) when is_atom(event) do
     GenServer.call(__MODULE__, {:listen, event, listener})
@@ -50,25 +76,49 @@ defmodule Laravex.Events.Dispatcher do
   end
 
   def handle_call({:dispatch, event, data, mode}, _from, state) do
-    listeners = Map.get(state.listeners, event, [])
+    state =
+      if state.fake do
+        %{state | recorded: [%{event: event, payload: data} | state.recorded]}
+      else
+        state
+      end
 
     reply =
-      case mode do
-        :each ->
-          Enum.each(listeners, &invoke_listener(&1, data))
-          :ok
+      if state.fake and not state.fake_run_listeners do
+        if mode == :until, do: nil, else: :ok
+      else
+        listeners = Map.get(state.listeners, event, [])
 
-        :until ->
-          Enum.reduce_while(listeners, nil, fn listener, _ ->
-            case invoke_listener(listener, data) do
-              nil -> {:cont, nil}
-              false -> {:cont, nil}
-              result -> {:halt, result}
-            end
-          end)
+        case mode do
+          :each ->
+            Enum.each(listeners, &invoke_listener(&1, data))
+            :ok
+
+          :until ->
+            Enum.reduce_while(listeners, nil, fn listener, _ ->
+              case invoke_listener(listener, data) do
+                nil -> {:cont, nil}
+                false -> {:cont, nil}
+                result -> {:halt, result}
+              end
+            end)
+        end
       end
 
     {:reply, reply, state}
+  end
+
+  def handle_call({:fake, run_listeners?}, _from, state) do
+    {:reply, :ok,
+     %{state | fake: true, fake_run_listeners: run_listeners?, recorded: []}}
+  end
+
+  def handle_call(:dispatched, _from, state) do
+    {:reply, Enum.reverse(state.recorded), state}
+  end
+
+  def handle_call(:clear_recorded, _from, state) do
+    {:reply, :ok, %{state | recorded: []}}
   end
 
   def handle_call(:listeners, _from, state) do

@@ -4,7 +4,7 @@ defmodule Laravex.Http.Response do
   defstruct status: 200, body: "", headers: [], cookies: []
 
   def new(status, body, headers \\ []) do
-    %__MODULE__{status: status, body: to_string(body), headers: headers}
+    %__MODULE__{status: status, body: normalize_body(body), headers: headers}
   end
 
   def html(body, status \\ 200) do
@@ -83,6 +83,18 @@ defmodule Laravex.Http.Response do
     ])
   end
 
+  @doc "File download response with a streamed on-disk body (`{:stream, path}`)."
+  def stream_download(full_path, filename, opts \\ []) when is_binary(full_path) and is_binary(filename) do
+    content_type = Keyword.get(opts, :content_type, "application/octet-stream")
+    disposition = if Keyword.get(opts, :inline, false), do: "inline", else: "attachment"
+    safe_name = String.replace(filename, "\"", "")
+
+    new(200, {:stream, full_path}, [
+      {"content-type", content_type},
+      {"content-disposition", ~s(#{disposition}; filename="#{safe_name}")}
+    ])
+  end
+
   def file(path, opts \\ []) when is_binary(path) do
     filename = Keyword.get(opts, :as) || Path.basename(path)
     contents = File.read!(path)
@@ -137,11 +149,12 @@ defmodule Laravex.Http.Response do
 
   def to_iodata(%__MODULE__{} = response) do
     reason = reason_phrase(response.status)
+    body_bin = body_binary(response.body)
 
     set_cookies = Enum.map(response.cookies, fn c -> {"set-cookie", c} end)
 
     headers =
-      (response.headers ++ set_cookies ++ [{"content-length", Integer.to_string(byte_size(response.body))}])
+      (response.headers ++ set_cookies ++ [{"content-length", Integer.to_string(byte_size(body_bin))}])
       |> Enum.map(fn {k, v} -> "#{k}: #{v}\r\n" end)
 
     [
@@ -149,9 +162,16 @@ defmodule Laravex.Http.Response do
       headers,
       "connection: close\r\n",
       "\r\n",
-      response.body
+      body_bin
     ]
   end
+
+  defp normalize_body({:stream, _} = stream), do: stream
+  defp normalize_body(body), do: to_string(body)
+
+  defp body_binary({:stream, path}) when is_binary(path), do: File.read!(path)
+  defp body_binary(body) when is_binary(body), do: body
+  defp body_binary(other), do: to_string(other)
 
   defp stringify(map) when is_map(map) do
     Map.new(map, fn {k, v} -> {to_string(k), v} end)

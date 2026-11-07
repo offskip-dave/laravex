@@ -45,6 +45,8 @@ defmodule Laravex.View do
 
     {contents, verbatim} = extract_verbatim(contents)
     {contents, assigns} = apply_props(contents, assigns)
+    {contents, assigns} = apply_inject(contents, assigns)
+    {contents, assigns} = apply_php(contents, assigns)
 
     contents
     |> apply_extends(assigns)
@@ -236,13 +238,25 @@ defmodule Laravex.View do
         layout_path = find_view(base, layout)
         layout_html = if layout_path, do: File.read!(layout_path), else: "{{ content }}"
 
-        sections =
-          Regex.scan(~r/@section\(['"]([^'"]+)['"]\)(.*?)@endsection/s, contents)
+        parent_sections =
+          Regex.scan(~r/@section\(['"]([^'"]+)['"]\)(.*?)@endsection/s, layout_html)
           |> Map.new(fn [_, name, body] -> {name, String.trim(body)} end)
 
+        Process.put(:laravex_parent_sections, parent_sections)
+
+        sections =
+          Regex.scan(~r/@section\(['"]([^'"]+)['"]\)(.*?)@endsection/s, contents)
+          |> Map.new(fn [_, name, body] ->
+            body =
+              String.trim(body)
+              |> String.replace("@parent", Map.get(parent_sections, name, ""))
+
+            {name, body}
+          end)
+
         content =
-          case Regex.run(~r/@section\(['"]content['"]\)(.*?)@endsection/s, contents) do
-            [_, body] -> String.trim(body)
+          case Map.get(sections, "content") do
+            body when is_binary(body) -> body
             _ -> Regex.replace(~r/@extends\(['"][^'"]+['"]\)/, contents, "")
           end
 
@@ -335,6 +349,97 @@ defmodule Laravex.View do
 
       _ ->
         {contents, assigns}
+    end
+  end
+
+  defp apply_inject(contents, assigns) do
+    case Regex.run(~r/@inject\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/, contents) do
+      [full, var, mod_str] ->
+        value = resolve_inject(mod_str)
+        apply_inject(String.replace(contents, full, "", global: false), Map.put(assigns, var, value))
+
+      nil ->
+        {contents, assigns}
+    end
+  end
+
+  defp resolve_inject(mod_str) do
+    mod = module_from_string(mod_str)
+
+    try do
+      Laravex.Container.make(mod)
+    rescue
+      _ -> fallback_inject(mod)
+    catch
+      :exit, _ -> fallback_inject(mod)
+    end
+  end
+
+  defp fallback_inject(mod) when is_atom(mod) do
+    cond do
+      function_exported?(mod, :new, 0) -> mod.new()
+      function_exported?(mod, :new, 1) -> mod.new([])
+      true -> mod
+    end
+  end
+
+  defp module_from_string(mod_str) do
+    mod_str
+    |> String.split(".")
+    |> Module.safe_concat()
+  rescue
+    ArgumentError -> String.to_atom("Elixir." <> mod_str)
+  end
+
+  defp apply_php(contents, assigns) do
+    case Regex.run(~r/@php(.*?)@endphp/s, contents) do
+      [full, body] ->
+        assigns = eval_php_block(String.trim(body), assigns)
+        apply_php(String.replace(contents, full, "", global: false), assigns)
+
+      nil ->
+        {contents, assigns}
+    end
+  end
+
+  defp eval_php_block("", assigns), do: assigns
+
+  defp eval_php_block(body, assigns) do
+    elixir =
+      body
+      |> String.split(~r/\r?\n/, trim: false)
+      |> Enum.map(&convert_php_assign_line/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("\n")
+
+    code = if elixir == "", do: "assigns", else: elixir <> "\nassigns"
+
+    try do
+      {result, _} = Code.eval_string(code, [assigns: assigns], __ENV__)
+      if is_map(result), do: result, else: assigns
+    rescue
+      _ -> assigns
+    catch
+      _, _ -> assigns
+    end
+  end
+
+  defp convert_php_assign_line(line) do
+    trimmed = String.trim(line)
+
+    cond do
+      trimmed == "" or String.starts_with?(trimmed, "//") or String.starts_with?(trimmed, "#") ->
+        ""
+
+      true ->
+        case Regex.run(~r/^assigns\[\s*"([^"]+)"\s*\]\s*=\s*(.+)$/u, trimmed) ||
+               Regex.run(~r/^assigns\[\s*'([^']+)'\s*\]\s*=\s*(.+)$/u, trimmed) do
+          [_, key, expr] ->
+            "assigns = Map.put(assigns, \"#{key}\", #{String.trim(expr)})"
+
+          nil ->
+            trimmed
+        end
     end
   end
 
@@ -845,6 +950,13 @@ defmodule Laravex.View do
 
   defp replace_directives(contents, assigns) do
     contents
+    |> then(fn html ->
+      parent_sections = Process.get(:laravex_parent_sections, %{})
+
+      Regex.replace(~r/@parent\b/, html, fn _ ->
+        Map.get(parent_sections, "content", "")
+      end)
+    end)
     |> then(fn html ->
       Regex.replace(~r/@unless\((.*?)\)(.*?)@endunless/s, html, fn _, expr, body ->
         if truthy?(eval_expr(expr, assigns)), do: "", else: body

@@ -12,6 +12,7 @@ defmodule Laravex.Application do
       Laravex.Queue.Worker,
       Laravex.Events.Dispatcher,
       Laravex.Broadcasting.Broadcaster,
+      {Registry, keys: :duplicate, name: Laravex.Broadcasting.PubsubRegistry},
       {Laravex.Foundation.Server, base_path: base_path}
     ]
 

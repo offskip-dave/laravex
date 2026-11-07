@@ -375,6 +375,10 @@ defmodule Laravex.Support.Collection do
     if truthy?(condition), do: c, else: fun.(c)
   end
 
+  @doc "Alias of `unless_cond/3` (Laravel `unless`)."
+  def unless(%__MODULE__{} = c, condition, fun) when is_function(fun, 1),
+    do: unless_cond(c, condition, fun)
+
   def when_empty(%__MODULE__{} = c, fun) when is_function(fun, 1) do
     if is_empty?(c), do: fun.(c), else: c
   end

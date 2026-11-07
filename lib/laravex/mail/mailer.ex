@@ -16,38 +16,38 @@ defmodule Laravex.Mail.Mailer do
     end
   end
 
-  @supported_drivers ~w(log array)
-
   def send(mailable) do
+    if queue_mailable?(mailable) do
+      Laravex.Mail.SendMailJob.dispatch([mailable])
+      :ok
+    else
+      deliver_now(mailable)
+    end
+  end
+
+  @doc "Send immediately (used by `SendMailJob` and sync delivery)."
+  def deliver_now(mailable) do
     ensure()
     driver = to_string(Laravex.Config.Repository.get("mail.default", "log"))
-    ensure_driver!(driver)
+    transport = Laravex.Mail.Resolver.module(driver)
     message = normalize(mailable)
 
     if Application.get_env(:laravex, :mail_fake, false) or driver == "array" do
       :ets.insert(@table, {:mail, message})
     end
 
-    case driver do
-      "array" ->
-        :ok
+    transport.send(message)
+  end
 
-      "log" ->
-        Laravex.Log.Logger.info("Mail sent", message)
-        :ok
+  defp queue_mailable?(mod) when is_atom(mod) do
+    cond do
+      function_exported?(mod, :via_queue?, 0) and mod.via_queue?() -> true
+      function_exported?(mod, :queue?, 0) and mod.queue?() -> true
+      true -> false
     end
   end
 
-  defp ensure_driver!(driver) do
-    unless driver in @supported_drivers do
-      raise ArgumentError,
-            "Mailer uses unsupported driver #{inspect(driver)}. " <>
-              "Supported drivers: #{Enum.join(@supported_drivers, ", ")} " <>
-              "(set MAIL_MAILER=log|array)."
-    end
-
-    :ok
-  end
+  defp queue_mailable?(_), do: false
 
   def sent do
     ensure()
@@ -145,7 +145,9 @@ defmodule Laravex.Mail.Mailer do
           bcc: if(function_exported?(mod, :bcc, 0), do: mod.bcc(), else: nil),
           reply_to: if(function_exported?(mod, :reply_to, 0), do: mod.reply_to(), else: nil),
           attachments:
-            if(function_exported?(mod, :attachments, 0), do: mod.attachments(), else: [])
+            if(function_exported?(mod, :attachments, 0), do: mod.attachments(), else: []),
+          markdown:
+            if(function_exported?(mod, :markdown, 0), do: mod.markdown(), else: nil)
         }
       end
 
@@ -196,6 +198,26 @@ defmodule Laravex.Mail.Mailer do
 
   defp render_body(%{body: body}) when is_binary(body) and body != "", do: body
 
+  defp render_body(%{markdown: {view, data}}) when is_binary(view) do
+    case load_view_text(view) do
+      nil -> ""
+      text -> render_markdown(text, data || %{})
+    end
+  end
+
+  defp render_body(%{markdown: md} = m) when is_binary(md) and md != "" do
+    data = Map.get(m, :data, %{})
+
+    if markdown_content?(md) do
+      render_markdown(md, data)
+    else
+      case load_view_text(md) do
+        nil -> render_markdown(md, data)
+        text -> render_markdown(text, data)
+      end
+    end
+  end
+
   defp render_body(%{view: view, data: data}) when is_binary(view) do
     base = Laravex.Foundation.Application.base_path()
     path =
@@ -213,6 +235,75 @@ defmodule Laravex.Mail.Mailer do
   end
 
   defp render_body(_), do: ""
+
+  defp load_view_text(view) do
+    base = Laravex.Foundation.Application.base_path()
+
+    path =
+      [
+        Path.join([base, "resources", "views", "#{view}.md"]),
+        Path.join([base, "resources", "views", "#{view}.markdown"]),
+        Path.join([base, "resources", "views", "#{view}.blade.php"]),
+        Path.join([base, "resources", "views", "#{view}.html"])
+      ]
+      |> Enum.find(&File.exists?/1)
+
+    if path, do: File.read!(path), else: nil
+  end
+
+  defp render_markdown(text, data) do
+    text
+    |> Laravex.View.render_string(data)
+    |> markdown_to_html()
+  end
+
+  defp markdown_to_html(md) when is_binary(md) do
+    md
+    |> String.trim()
+    |> String.split(~r/\n{2,}/)
+    |> Enum.map(&markdown_block/1)
+    |> Enum.join("\n")
+  end
+
+  defp markdown_block(block) do
+    block = String.trim(block)
+
+    cond do
+      String.starts_with?(block, "### ") ->
+        "<h3>#{inline_markdown(String.slice(block, 4..-1//1))}</h3>"
+
+      String.starts_with?(block, "## ") ->
+        "<h2>#{inline_markdown(String.slice(block, 3..-1//1))}</h2>"
+
+      String.starts_with?(block, "# ") ->
+        "<h1>#{inline_markdown(String.slice(block, 2..-1//1))}</h1>"
+
+      true ->
+        lines = String.split(block, "\n") |> Enum.map(&inline_markdown/1) |> Enum.join("<br>")
+        "<p>#{lines}</p>"
+    end
+  end
+
+  defp inline_markdown(line) do
+    line
+    |> escape_html()
+    |> then(fn s ->
+      s
+      |> String.replace(~r/\*\*(.+?)\*\*/, "<strong>\\1</strong>")
+      |> String.replace(~r/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/, "<em>\\1</em>")
+    end)
+  end
+
+  defp markdown_content?(text) do
+    String.contains?(text, "\n") or String.starts_with?(text, "#") or String.contains?(text, "**")
+  end
+
+  defp escape_html(text) do
+    text
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+  end
 end
 
 defmodule Laravex.Mail.Mailable do

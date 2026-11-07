@@ -137,7 +137,14 @@ defmodule Laravex.Http.Kernel do
         _ -> []
       end)
 
-    Laravex.Http.Middleware.global(middleware) ++ group_plugs
+    plugs = Laravex.Http.Middleware.global(middleware) ++ group_plugs
+    without = Process.get(:laravex_without_middleware, [])
+
+    if without == [] do
+      plugs
+    else
+      Laravex.Http.Middleware.without(plugs, without)
+    end
   end
 
   defp not_found(request) do

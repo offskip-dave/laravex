@@ -6,12 +6,15 @@ defmodule Laravex.Database.Query do
             bindings: [],
             joins: [],
             groups: [],
+            group_raw: [],
             havings: [],
             order: nil,
+            unions: [],
             limit: nil,
             offset: nil,
             distinct?: false,
-            columns: ["*"]
+            columns: ["*"],
+            lock: nil
 
   def table(name), do: %__MODULE__{table: name}
 
@@ -127,6 +130,32 @@ defmodule Laravex.Database.Query do
 
   def right_join(%__MODULE__{} = q, table, left, op, right) when is_binary(op) do
     %{q | joins: q.joins ++ [{:right, to_string(table), to_string(left), op, to_string(right)}]}
+  end
+
+  @doc "FROM a subquery aliased as `as` (Laravel `fromSub`)."
+  def from_sub(%__MODULE__{} = q, %__MODULE__{} = sub, as) do
+    {sql, bindings} = subquery_body(sub)
+    as = to_string(as)
+    %{q | table: "(#{sql}) AS #{as}", bindings: bindings ++ q.bindings}
+  end
+
+  @doc "INNER JOIN a subquery aliased as `as` (Laravel `joinSub`)."
+  def join_sub(%__MODULE__{} = q, %__MODULE__{} = sub, as, left, right),
+    do: join_sub(q, sub, as, left, "=", right)
+
+  def join_sub(%__MODULE__{} = q, %__MODULE__{} = sub, as, left, op, right)
+      when is_binary(op) do
+    {sql, bindings} = subquery_body(sub)
+    as = to_string(as)
+
+    %{
+      q
+      | joins:
+          q.joins ++
+            [
+              {:inner, {:subquery, sql, as, bindings}, to_string(left), op, to_string(right)}
+            ]
+    }
   end
 
   def where(%__MODULE__{} = q, column, value) do
@@ -406,6 +435,34 @@ defmodule Laravex.Database.Query do
 
   def order_by_desc(%__MODULE__{} = q, column), do: order_by(q, column, "desc")
 
+  @doc "Raw ORDER BY fragment (Laravel `orderByRaw`)."
+  def order_by_raw(%__MODULE__{} = q, sql, bindings \\ []) when is_binary(sql) do
+    %{q | order: sql, bindings: q.bindings ++ List.wrap(bindings)}
+  end
+
+  @doc "Clear ordering (Laravel `reorder`)."
+  def reorder(%__MODULE__{} = q), do: %{q | order: nil}
+
+  @doc "ORDER BY RANDOM()/RAND() (Laravel `inRandomOrder`; MySQL uses `RAND()`)."
+  def in_random_order(%__MODULE__{} = q),
+    do: order_by_raw(q, Laravex.Database.Connection.random_order_fragment())
+
+  def group_by_raw(%__MODULE__{} = q, sql) when is_binary(sql) do
+    %{q | group_raw: q.group_raw ++ [sql]}
+  end
+
+  @doc "Append a UNION query (Laravel `union`)."
+  def union(%__MODULE__{} = q, %__MODULE__{} = other) do
+    %{q | unions: q.unions ++ [{:union, other}]}
+  end
+
+  def union_all(%__MODULE__{} = q, %__MODULE__{} = other) do
+    %{q | unions: q.unions ++ [{:union_all, other}]}
+  end
+
+  def lock_for_update(%__MODULE__{} = q), do: %{q | lock: :update}
+  def shared_lock(%__MODULE__{} = q), do: %{q | lock: :shared}
+
   def limit(%__MODULE__{} = q, n), do: %{q | limit: n}
   def offset(%__MODULE__{} = q, n), do: %{q | offset: n}
 
@@ -418,7 +475,66 @@ defmodule Laravex.Database.Query do
   end
 
   def get(%__MODULE__{} = q) do
-    Laravex.Database.Connection.query(to_sql(q), q.bindings)
+    Laravex.Database.Connection.query(to_sql(q), all_bindings(q))
+  end
+
+  defp all_bindings(%__MODULE__{} = q) do
+    join_bindings =
+      Enum.flat_map(q.joins || [], fn
+        {_kind, {:subquery, _sql, _as, bindings}, _, _, _} -> bindings
+        _ -> []
+      end)
+
+    base = join_bindings ++ (q.bindings || [])
+
+    Enum.reduce(q.unions || [], base, fn {_kind, other}, acc ->
+      acc ++ all_bindings(other)
+    end)
+  end
+
+  defp subquery_body(%__MODULE__{} = sub) do
+    {build_sql(sub), all_bindings(sub)}
+  end
+
+  @doc """
+  Cursor pagination (keyset on `id` or `column`).
+
+  Returns `%{data:, next_cursor:, prev_cursor:, path:}`.
+  """
+  def cursor_paginate(%__MODULE__{} = q, per_page \\ 15, opts \\ [])
+      when is_integer(per_page) and per_page > 0 do
+    column = to_string(Keyword.get(opts, :column, "id"))
+    cursor = Keyword.get(opts, :cursor)
+    path = Keyword.get(opts, :path, "/")
+
+    q =
+      q
+      |> order_by(column, "asc")
+      |> then(fn base ->
+        if is_nil(cursor) or cursor == "" do
+          base
+        else
+          where(base, column, ">", cursor)
+        end
+      end)
+
+    rows = q |> limit(per_page + 1) |> get()
+    has_more = length(rows) > per_page
+    data = Enum.take(rows, per_page)
+
+    next_cursor =
+      if has_more do
+        last = List.last(data)
+
+        Map.get(last, column) || Map.get(last, String.to_atom(column))
+      end
+
+    %{
+      data: data,
+      next_cursor: next_cursor,
+      prev_cursor: cursor,
+      path: path
+    }
   end
 
   def first(%__MODULE__{} = q) do
@@ -630,24 +746,44 @@ defmodule Laravex.Database.Query do
     end
   end
 
-  defp to_sql(%__MODULE__{} = q) do
+  def to_sql(%__MODULE__{} = q), do: build_sql(q)
+
+  defp build_sql(%__MODULE__{} = q) do
     cols = Enum.join(q.columns, ", ")
     distinct = if Map.get(q, :distinct?), do: "DISTINCT ", else: ""
 
-    "SELECT #{distinct}#{cols} FROM #{q.table}" <>
-      join_clause(q) <>
-      where_clause(q) <>
-      group_clause(q) <>
-      having_clause(q) <>
-      if(q.order, do: " ORDER BY #{q.order}", else: "") <>
-      if(q.limit, do: " LIMIT #{q.limit}", else: "") <>
-      if(q.offset, do: " OFFSET #{q.offset}", else: "")
+    base =
+      "SELECT #{distinct}#{cols} FROM #{q.table}" <>
+        join_clause(q) <>
+        where_clause(q) <>
+        group_clause(q) <>
+        having_clause(q) <>
+        if(q.order, do: " ORDER BY #{q.order}", else: "") <>
+        if(q.limit, do: " LIMIT #{q.limit}", else: "") <>
+        if(q.offset, do: " OFFSET #{q.offset}", else: "") <>
+        lock_clause(q)
+
+    Enum.reduce(q.unions || [], base, fn
+      {:union, other}, acc ->
+        acc <> " UNION " <> wrap_union_sql(other)
+
+      {:union_all, other}, acc ->
+        acc <> " UNION ALL " <> wrap_union_sql(other)
+    end)
   end
 
-  defp group_clause(%{groups: groups}) when is_list(groups) and groups != [],
-    do: " GROUP BY #{Enum.join(groups, ", ")}"
+  defp wrap_union_sql(%__MODULE__{} = q), do: "(" <> build_sql(%{q | unions: []}) <> ")"
 
-  defp group_clause(_), do: ""
+  defp lock_clause(%{lock: :update}), do: ""
+  defp lock_clause(%{lock: :shared}), do: ""
+  defp lock_clause(_), do: ""
+
+  defp group_clause(q) do
+    groups = Map.get(q, :groups) || []
+    raw = Map.get(q, :group_raw) || []
+    parts = Enum.map(groups, &to_string/1) ++ List.wrap(raw)
+    if parts == [], do: "", else: " GROUP BY #{Enum.join(parts, ", ")}"
+  end
 
   defp having_clause(%{havings: []}), do: ""
   defp having_clause(%{havings: nil}), do: ""
@@ -676,9 +812,23 @@ defmodule Laravex.Database.Query do
 
   defp join_clause(%{joins: joins}) do
     Enum.map_join(joins, "", fn
-      {:inner, table, left, op, right} -> " INNER JOIN #{table} ON #{left} #{op} #{right}"
-      {:left, table, left, op, right} -> " LEFT JOIN #{table} ON #{left} #{op} #{right}"
-      {:right, table, left, op, right} -> " RIGHT JOIN #{table} ON #{left} #{op} #{right}"
+      {:inner, table, left, op, right} when is_binary(table) ->
+        " INNER JOIN #{table} ON #{left} #{op} #{right}"
+
+      {:inner, {:subquery, sql, as, _bindings}, left, op, right} ->
+        " INNER JOIN (#{sql}) AS #{as} ON #{left} #{op} #{right}"
+
+      {:left, table, left, op, right} when is_binary(table) ->
+        " LEFT JOIN #{table} ON #{left} #{op} #{right}"
+
+      {:left, {:subquery, sql, as, _bindings}, left, op, right} ->
+        " LEFT JOIN (#{sql}) AS #{as} ON #{left} #{op} #{right}"
+
+      {:right, table, left, op, right} when is_binary(table) ->
+        " RIGHT JOIN #{table} ON #{left} #{op} #{right}"
+
+      {:right, {:subquery, sql, as, _bindings}, left, op, right} ->
+        " RIGHT JOIN (#{sql}) AS #{as} ON #{left} #{op} #{right}"
     end)
   end
 

@@ -2,29 +2,20 @@ defmodule Laravex.Filesystem.Storage do
   @moduledoc "Filesystem disks facade (local driver)."
 
   def disk(name \\ nil) do
-    name = name || Laravex.Config.Repository.get("filesystems.default", "local")
+    name = to_string(name || Laravex.Config.Repository.get("filesystems.default", "local"))
     disks = Laravex.Config.Repository.get("filesystems.disks", %{})
-    cfg = Map.get(disks, name) || Map.get(disks, to_string(name)) || %{}
-    ensure_local_driver!(name, cfg)
-    root = Map.get(cfg, "root") || Map.get(cfg, :root) || storage_root(name)
-    %{name: name, root: root, cfg: cfg}
-  end
-
-  defp ensure_local_driver!(name, cfg) do
-    driver = Map.get(cfg, "driver") || Map.get(cfg, :driver) || "local"
-
-    unless driver in ["local", :local] do
-      raise ArgumentError,
-            "Filesystem disk #{inspect(name)} uses unsupported driver #{inspect(driver)}. " <>
-              "Only the \"local\" driver is available in Laravex — set FILESYSTEM_DISK=local " <>
-              "(or install a cloud driver later)."
-    end
-
-    :ok
+    cfg = Map.get(disks, name) || Map.get(disks, String.to_atom(name)) || %{}
+    adapter = Laravex.Filesystem.Resolver.module(cfg)
+    adapter.ensure_supported!(name, cfg)
+    root = adapter.root(cfg, name)
+    %{name: name, root: root, cfg: cfg, adapter: adapter}
   end
 
   def put(path, contents, disk \\ nil, opts \\ []) do
     d = disk(disk)
+
+    if s3_disk?(d), do: Laravex.Filesystem.Disks.S3.put(d, path, contents, opts)
+
     full = Path.join(d.root, path)
     File.mkdir_p!(Path.dirname(full))
     File.write!(full, contents)
@@ -59,20 +50,35 @@ defmodule Laravex.Filesystem.Storage do
 
   def get(path, disk \\ nil) do
     d = disk(disk)
-    File.read!(Path.join(d.root, path))
+
+    if s3_disk?(d) do
+      Laravex.Filesystem.Disks.S3.get(d, path)
+    else
+      File.read!(Path.join(d.root, path))
+    end
   end
 
   def exists?(path, disk \\ nil) do
     d = disk(disk)
-    File.exists?(Path.join(d.root, path))
+
+    if s3_disk?(d) do
+      Laravex.Filesystem.Disks.S3.exists?(d, path)
+    else
+      File.exists?(Path.join(d.root, path))
+    end
   end
 
   def missing?(path, disk \\ nil), do: not exists?(path, disk)
 
   def delete(path, disk \\ nil) do
     d = disk(disk)
-    _ = File.rm(Path.join(d.root, path))
-    :ok
+
+    if s3_disk?(d) do
+      Laravex.Filesystem.Disks.S3.delete(d, path)
+    else
+      _ = File.rm(Path.join(d.root, path))
+      :ok
+    end
   end
 
   def size(path, disk \\ nil) do
@@ -280,14 +286,19 @@ defmodule Laravex.Filesystem.Storage do
 
   def url(path, disk_name \\ "public") do
     d = disk(disk_name)
-    base = Map.get(d.cfg, "url") || Map.get(d.cfg, :url)
 
-    cond do
-      is_binary(base) and base != "" ->
-        String.trim_trailing(base, "/") <> "/" <> String.trim_leading(path, "/")
+    if s3_disk?(d) do
+      Laravex.Filesystem.Disks.S3.url(path, d.cfg)
+    else
+      base = Map.get(d.cfg, "url") || Map.get(d.cfg, :url)
 
-      true ->
-        "/storage/" <> String.trim_leading(path, "/")
+      cond do
+        is_binary(base) and base != "" ->
+          String.trim_trailing(base, "/") <> "/" <> String.trim_leading(path, "/")
+
+        true ->
+          "/storage/" <> String.trim_leading(path, "/")
+      end
     end
   end
 
@@ -343,6 +354,20 @@ defmodule Laravex.Filesystem.Storage do
     filename = Keyword.get(opts, :as) || Path.basename(path)
     contents = get(path, disk_name)
     Laravex.Http.Response.download(contents, filename, opts)
+  end
+
+  @doc "Stream a stored file via HTTP without loading it entirely (Laravel `streamDownload`)."
+  def stream_download(path, name \\ nil, disk \\ nil) do
+    d = disk(disk)
+    full = Path.join(d.root, path)
+    filename = name || Path.basename(path)
+
+    opts = [
+      content_type: mime_type(path, disk),
+      disk: disk
+    ]
+
+    Laravex.Http.Response.stream_download(full, filename, opts)
   end
 
   @doc "HTTP response for a stored file, inline by default (Laravel `Storage::response`)."
@@ -409,9 +434,6 @@ defmodule Laravex.Filesystem.Storage do
   defp apply_visibility(full, :private), do: apply_visibility(full, "private")
   defp apply_visibility(_, _), do: :ok
 
-  defp storage_root("public"),
-    do: Path.join(Laravex.Foundation.Application.base_path(), "storage/app/public")
-
-  defp storage_root(_),
-    do: Path.join(Laravex.Foundation.Application.base_path(), "storage/app/private")
+  defp s3_disk?(%{adapter: Laravex.Filesystem.Disks.S3}), do: true
+  defp s3_disk?(_), do: false
 end

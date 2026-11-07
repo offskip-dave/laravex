@@ -290,3 +290,85 @@ defmodule Laravex.Http.Middleware.RequirePasswordConfirmation do
 
   defp to_integer(_, default), do: default
 end
+
+defmodule Laravex.Http.Middleware.EnsureFrontendRequestsAreStateful do
+  @moduledoc """
+  SPA Sanctum: treat matching Origin/Referer hosts as stateful (session + CSRF on API).
+
+  Domains from `sanctum.stateful` or `session.domain`. Route alias: `sanctum.stateful`.
+  """
+
+  @stateful_plugs [
+    Laravex.Http.Middleware.EncryptCookies,
+    Laravex.Http.Middleware.AddQueuedCookies,
+    Laravex.Http.Middleware.StartSession,
+    Laravex.Http.Middleware.AuthenticateSession,
+    Laravex.Http.Middleware.VerifyCsrfToken
+  ]
+
+  def handle(request, _opts) do
+    if from_stateful_domain?(request) do
+      case Laravex.Http.Middleware.run(request, @stateful_plugs) do
+        {:ok, next} -> {:ok, next}
+        {:halt, resp} -> {:halt, resp}
+      end
+    else
+      {:ok, request}
+    end
+  end
+
+  defp from_stateful_domain?(request) do
+    host = request_origin_host(request)
+    host != nil and host in stateful_domains()
+  end
+
+  defp request_origin_host(request) do
+    cond do
+      origin = Laravex.Http.Request.header(request, "origin") ->
+        uri_host(origin)
+
+      referer = Laravex.Http.Request.header(request, "referer") ->
+        uri_host(referer)
+
+      true ->
+        nil
+    end
+  end
+
+  defp uri_host(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{host: h} when is_binary(h) and h != "" -> String.downcase(h)
+      _ -> nil
+    end
+  end
+
+  defp uri_host(_), do: nil
+
+  defp stateful_domains do
+    raw =
+      Laravex.Config.Repository.get("sanctum.stateful") ||
+        case Laravex.Config.Repository.get("session.domain") do
+          nil -> ["localhost", "127.0.0.1", "::1"]
+          domain -> [domain]
+        end
+
+    raw
+    |> List.wrap()
+    |> Enum.flat_map(&String.split(to_string(&1), ",", trim: true))
+    |> Enum.map(&normalize_stateful_domain/1)
+    |> Enum.uniq()
+  end
+
+  defp normalize_stateful_domain(domain) do
+    domain
+    |> to_string()
+    |> String.trim()
+    |> String.downcase()
+    |> then(fn d ->
+      case URI.parse("http://#{d}") do
+        %URI{host: h} when is_binary(h) and h != "" -> h
+        _ -> d
+      end
+    end)
+  end
+end

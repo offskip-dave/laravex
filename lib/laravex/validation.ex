@@ -462,6 +462,9 @@ defmodule Laravex.Validation do
             ["The #{field} field must be an image."]
         end
 
+      "dimensions:" <> rest ->
+        dimensions_rule(field, value, rest)
+
       "mimes:" <> list ->
         mime_ext_rule(field, value, list)
 
@@ -1327,6 +1330,138 @@ defmodule Laravex.Validation do
         []
     end
   end
+
+  defp dimensions_rule(_field, nil, _), do: []
+  defp dimensions_rule(_field, "", _), do: []
+
+  defp dimensions_rule(field, %Laravex.Http.UploadedFile{} = file, spec) do
+    case image_dimensions(file) do
+      {:ok, width, height} ->
+        parse_dimensions_spec(spec)
+        |> Enum.reduce([], fn {key, limit}, acc ->
+          acc ++ dimension_check(field, width, height, key, limit)
+        end)
+
+      :error ->
+        ["The #{field} field must be an image."]
+    end
+  end
+
+  defp dimensions_rule(field, _value, _spec),
+    do: ["The #{field} field must be an image."]
+
+  defp parse_dimensions_spec(spec) do
+    spec
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.flat_map(fn part ->
+      case String.split(part, "=", parts: 2) do
+        [key, val] ->
+          key = String.downcase(String.trim(key))
+          limit = String.to_integer(String.trim(val))
+          dimension_keys(key, limit)
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp dimension_keys("width", n), do: [{:width, n}]
+  defp dimension_keys("height", n), do: [{:height, n}]
+  defp dimension_keys("min_width", n), do: [{:min_width, n}]
+  defp dimension_keys("max_width", n), do: [{:max_width, n}]
+  defp dimension_keys("min_height", n), do: [{:min_height, n}]
+  defp dimension_keys("max_height", n), do: [{:max_height, n}]
+  defp dimension_keys(_, _), do: []
+
+  defp dimension_check(field, width, _height, :min_width, min) do
+    if width >= min, do: [], else: ["The #{field} field has invalid image dimensions."]
+  end
+
+  defp dimension_check(field, width, _height, :max_width, max) do
+    if width <= max, do: [], else: ["The #{field} field has invalid image dimensions."]
+  end
+
+  defp dimension_check(field, _width, height, :min_height, min) do
+    if height >= min, do: [], else: ["The #{field} field has invalid image dimensions."]
+  end
+
+  defp dimension_check(field, _width, height, :max_height, max) do
+    if height <= max, do: [], else: ["The #{field} field has invalid image dimensions."]
+  end
+
+  defp dimension_check(field, width, _height, :width, expected) do
+    if width == expected, do: [], else: ["The #{field} field has invalid image dimensions."]
+  end
+
+  defp dimension_check(field, _width, height, :height, expected) do
+    if height == expected, do: [], else: ["The #{field} field has invalid image dimensions."]
+  end
+
+  defp image_dimensions(%Laravex.Http.UploadedFile{} = file) do
+    bytes = uploaded_file_bytes(file)
+
+    cond do
+      is_binary(bytes) and byte_size(bytes) >= 24 and png?(bytes) ->
+        <<_::binary-size(16), w::32-big, h::32-big, _::binary>> = bytes
+        {:ok, w, h}
+
+      is_binary(bytes) and byte_size(bytes) >= 4 and jpeg?(bytes) ->
+        jpeg_dimensions(bytes)
+
+      true ->
+        :error
+    end
+  end
+
+  defp uploaded_file_bytes(%Laravex.Http.UploadedFile{contents: c}) when is_binary(c) and c != "",
+    do: c
+
+  defp uploaded_file_bytes(%Laravex.Http.UploadedFile{path: path}) when is_binary(path) do
+    if File.exists?(path), do: File.read!(path), else: nil
+  end
+
+  defp uploaded_file_bytes(_), do: nil
+
+  defp png?(<<137, 80, 78, 71, 13, 10, 26, 10, _::binary>>), do: true
+  defp png?(_), do: false
+
+  defp jpeg?(<<0xFF, 0xD8, _::binary>>), do: true
+  defp jpeg?(_), do: false
+
+  @jpeg_sof_markers [0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF]
+
+  defp jpeg_dimensions(bytes) do
+    case bytes do
+      <<0xFF, 0xD8, rest::binary>> -> scan_jpeg_sof(rest)
+      _ -> :error
+    end
+  end
+
+  defp scan_jpeg_sof(<<0xFF, 0xD9, _::binary>>), do: :error
+  defp scan_jpeg_sof(<<0xFF, marker, rest::binary>>) when marker in @jpeg_sof_markers do
+    case rest do
+      <<_len::16-big, _precision, height::16-big, width::16-big, _::binary>> ->
+        {:ok, width, height}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp scan_jpeg_sof(<<0xFF, _marker, rest::binary>>) do
+    case rest do
+      <<len::16-big, _::binary-size(len - 2), more::binary>> when len >= 2 ->
+        scan_jpeg_sof(more)
+
+      _ ->
+        :error
+    end
+  end
+
+  defp scan_jpeg_sof(_), do: :error
 
   defp mime_ext_rule(_field, nil, _), do: []
   defp mime_ext_rule(_field, "", _), do: []

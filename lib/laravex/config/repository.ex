@@ -7,7 +7,7 @@ defmodule Laravex.Config.Repository do
   @mix_config_files MapSet.new(~w(config.exs dev.exs test.exs prod.exs runtime.exs))
 
   @default_configs ~w(
-    app auth cache database filesystems logging mail queue services session
+    app auth cache database filesystems logging mail queue sanctum services session
   )
 
   def load!(base_path) do

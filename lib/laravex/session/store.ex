@@ -154,40 +154,30 @@ defmodule Laravex.Session.Store do
 
   def save(sid, session) when is_binary(sid) do
     ensure()
-    driver = ensure_driver!()
+    _ = session_driver()
     :ets.insert(@table, {sid, session})
-
-    case driver do
-      "database" -> persist_db(sid, session)
-      "file" -> persist_file(sid, session)
-    end
-
+    session_driver().write(sid, session)
     :ok
   end
 
   def delete(sid) when is_binary(sid) do
     ensure()
-    driver = ensure_driver!()
+    _ = session_driver()
     :ets.delete(@table, sid)
-
-    case driver do
-      "database" -> delete_db(sid)
-      "file" -> delete_file(sid)
-    end
-
+    session_driver().delete(sid)
     :ok
   end
 
   def load(sid) do
     ensure()
-    _ = ensure_driver!()
+    _ = session_driver()
 
     case :ets.lookup(@table, sid) do
       [{^sid, session}] ->
         session
 
       [] ->
-        case read_persistent(sid) do
+        case session_driver().read(sid) do
           {:ok, session} ->
             :ets.insert(@table, {sid, session})
             session
@@ -200,22 +190,7 @@ defmodule Laravex.Session.Store do
 
   def cookie_name, do: Laravex.Config.Repository.get("session.cookie", "laravex-session")
 
-  @supported_drivers ~w(file database)
-
-  defp ensure_driver! do
-    driver = to_string(Laravex.Config.Repository.get("session.driver", "file"))
-
-    unless driver in @supported_drivers do
-      raise ArgumentError,
-            "Session uses unsupported driver #{inspect(driver)}. " <>
-              "Supported drivers: #{Enum.join(@supported_drivers, ", ")} " <>
-              "(set SESSION_DRIVER=file|database)."
-    end
-
-    driver
-  end
-
-  defp driver, do: ensure_driver!()
+  defp session_driver, do: Laravex.Session.Resolver.module()
 
   defp stringify_map(map) do
     Map.new(map, fn {k, v} -> {to_string(k), v} end)
@@ -227,105 +202,6 @@ defmodule Laravex.Session.Store do
       n when is_binary(n) -> String.to_integer(n) * 60
       _ -> 120 * 60
     end
-  end
-
-  defp read_persistent(sid) do
-    case driver() do
-      "database" -> read_db(sid)
-      "file" -> read_file(sid)
-    end
-  end
-
-  defp persist_file(sid, session) do
-    dir = session_files_dir()
-    File.mkdir_p!(dir)
-    File.write!(Path.join(dir, sid), :erlang.term_to_binary(session))
-  end
-
-  defp read_file(sid) do
-    path = Path.join(session_files_dir(), sid)
-
-    if File.exists?(path) do
-      mtime = File.stat!(path).mtime |> NaiveDateTime.from_erl!() |> DateTime.from_naive!("Etc/UTC")
-      age = DateTime.diff(DateTime.utc_now(), mtime, :second)
-
-      if age > lifetime_seconds() do
-        _ = File.rm(path)
-        :error
-      else
-        {:ok, :erlang.binary_to_term(File.read!(path))}
-      end
-    else
-      :error
-    end
-  rescue
-    _ -> :error
-  end
-
-  defp delete_file(sid) do
-    path = Path.join(session_files_dir(), sid)
-    _ = if File.exists?(path), do: File.rm(path)
-    :ok
-  end
-
-  defp session_files_dir do
-    Laravex.Config.Repository.get("session.files") ||
-      Path.join(Laravex.Foundation.Application.base_path(), "storage/framework/sessions")
-  end
-
-  defp persist_db(sid, session) do
-    if sessions_table?() do
-      payload = session |> :erlang.term_to_binary() |> Base.encode64()
-      now = System.system_time(:second)
-      user_id = Map.get(session, "login_web")
-
-      Laravex.Database.Connection.execute("DELETE FROM sessions WHERE id = ?", [sid])
-
-      Laravex.Database.Connection.execute(
-        "INSERT INTO sessions (id, user_id, payload, last_activity) VALUES (?, ?, ?, ?)",
-        [sid, user_id, payload, now]
-      )
-    else
-      persist_file(sid, session)
-    end
-  rescue
-    _ -> persist_file(sid, session)
-  end
-
-  defp read_db(sid) do
-    if sessions_table?() do
-      case Laravex.Database.Connection.query(
-             "SELECT payload, last_activity FROM sessions WHERE id = ?",
-             [sid]
-           ) do
-        [%{"payload" => payload, "last_activity" => last}] ->
-          last_i = to_int(last)
-
-          if last_i > 0 and System.system_time(:second) - last_i > lifetime_seconds() do
-            delete_db(sid)
-            :error
-          else
-            {:ok, :erlang.binary_to_term(Base.decode64!(payload))}
-          end
-
-        _ ->
-          :error
-      end
-    else
-      read_file(sid)
-    end
-  rescue
-    _ -> :error
-  end
-
-  defp delete_db(sid) do
-    if sessions_table?() do
-      Laravex.Database.Connection.execute("DELETE FROM sessions WHERE id = ?", [sid])
-    end
-
-    :ok
-  rescue
-    _ -> :ok
   end
 
   defp maybe_lottery_gc do
@@ -347,40 +223,7 @@ defmodule Laravex.Session.Store do
 
   defp gc_expired do
     cutoff = System.system_time(:second) - lifetime_seconds()
-
-    case driver() do
-      "database" ->
-        if sessions_table?() do
-          Laravex.Database.Connection.execute("DELETE FROM sessions WHERE last_activity < ?", [
-            cutoff
-          ])
-        end
-
-      "file" ->
-        dir = session_files_dir()
-
-        if File.dir?(dir) do
-          Enum.each(File.ls!(dir), fn file ->
-            path = Path.join(dir, file)
-
-            with {:ok, stat} <- File.stat(path),
-                 {:ok, mtime} <- NaiveDateTime.from_erl(stat.mtime),
-                 {:ok, dt} <- DateTime.from_naive(mtime, "Etc/UTC") do
-              if DateTime.diff(DateTime.utc_now(), dt, :second) > lifetime_seconds() do
-                File.rm(path)
-              end
-            else
-              _ -> :ok
-            end
-          end)
-        end
-    end
-  end
-
-  defp sessions_table? do
-    Laravex.Database.Schema.has_table?("sessions")
-  rescue
-    _ -> false
+    session_driver().gc_expired(cutoff)
   end
 
   defp to_int(n) when is_integer(n), do: n

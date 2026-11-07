@@ -11,6 +11,16 @@ defmodule Laravex.Hashing.Hash do
   end
 
   def check(plain, hashed) when is_binary(plain) and is_binary(hashed) do
+    # Foreign bcrypt hashes ($2y$ / $2a$) are not verified here — Laravex `make/1`
+    # uses PBKDF2 only. Add an optional bcrypt library if you need to verify these.
+    if String.starts_with?(hashed, "$2y$") or String.starts_with?(hashed, "$2a$") do
+      false
+    else
+      check_pbkdf2(plain, hashed)
+    end
+  end
+
+  defp check_pbkdf2(plain, hashed) do
     case String.split(hashed, ":") do
       ["pbkdf2", iters, salt_hex, hash_hex] ->
         salt = Base.decode16!(salt_hex, case: :lower)
@@ -35,6 +45,16 @@ defmodule Laravex.Hashing.Hash do
   end
 
   def needs_rehash?(hashed) when is_binary(hashed) do
+    if String.starts_with?(hashed, "$2y$") or String.starts_with?(hashed, "$2a$") do
+      true
+    else
+      needs_rehash_pbkdf2?(hashed)
+    end
+  end
+
+  def needs_rehash?(_), do: true
+
+  defp needs_rehash_pbkdf2?(hashed) do
     case String.split(hashed, ":") do
       ["pbkdf2", iters, _salt, _hash] ->
         String.to_integer(iters) != iterations()
@@ -51,8 +71,6 @@ defmodule Laravex.Hashing.Hash do
   rescue
     _ -> true
   end
-
-  def needs_rehash?(_), do: true
 
   def legacy(password) do
     salt = <<0::128>>

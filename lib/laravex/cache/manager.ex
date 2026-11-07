@@ -63,6 +63,69 @@ defmodule Laravex.Cache.Manager do
 
   def remember_forever(key, fun) when is_function(fun, 0), do: remember(key, nil, fun)
 
+  @doc """
+  Stale-while-revalidate cache (Laravel `Cache::flexible` lite).
+
+      flexible("users", [60, 120], fn -> fetch_users() end)
+  """
+  def flexible(key, [fresh, stale], fun)
+      when is_function(fun, 0) and is_integer(fresh) and is_integer(stale) and fresh >= 0 and
+             stale >= fresh do
+    key = to_string(key)
+    now = System.system_time(:second)
+
+    case get(key, :__missing__) do
+      :__missing__ ->
+        store_flexible(key, fun.(), now, fresh, stale)
+
+      {value, fresh_until, stale_until} when is_integer(fresh_until) and is_integer(stale_until) ->
+        cond do
+          now <= fresh_until ->
+            value
+
+          now <= stale_until ->
+            _ = Task.start(fn -> refresh_flexible(key, fun, fresh, stale) end)
+            value
+
+          true ->
+            store_flexible(key, fun.(), now, fresh, stale)
+        end
+
+      _other ->
+        store_flexible(key, fun.(), now, fresh, stale)
+    end
+  end
+
+  @doc "Process-dictionary memoization for the current process (Laravel `memo`)."
+  def memo(key, fun) when is_function(fun, 0) do
+    dict_key = {:laravex_cache_memo, to_string(key)}
+
+    case Process.get(dict_key) do
+      nil ->
+        value = fun.()
+        Process.put(dict_key, value)
+        value
+
+      value ->
+        value
+    end
+  end
+
+  defp store_flexible(key, value, now, fresh, stale) do
+    put(key, {value, now + fresh, now + stale})
+    value
+  end
+
+  defp refresh_flexible(key, fun, fresh, stale) do
+    now = System.system_time(:second)
+
+    try do
+      put(key, {fun.(), now + fresh, now + stale})
+    rescue
+      _ -> :ok
+    end
+  end
+
   def increment(key, amount \\ 1) when is_number(amount) do
     GenServer.call(__MODULE__, {:increment, to_string(key), amount})
   end
@@ -131,40 +194,24 @@ defmodule Laravex.Cache.Manager do
 
   @impl true
   def handle_call({:put, key, value, ttl}, _from, state) do
-    store = effective_store()
+    store = Laravex.Cache.Resolver.effective()
     expires = if ttl, do: System.system_time(:second) + ttl, else: nil
     entry = %{value: value, expires: expires}
+    store.put(key, entry, state)
 
     state =
-      case store do
-        "array" ->
-          %{state | array: Map.put(state.array, key, entry)}
-
-        "file" ->
-          write_file(key, entry)
-          state
-
-        "database" ->
-          write_db(key, entry)
-          %{state | array: Map.put(state.array, key, entry)}
-
-        _ ->
-          %{state | array: Map.put(state.array, key, entry)}
+      if store == Laravex.Cache.Stores.Array or store == Laravex.Cache.Stores.Database do
+        %{state | array: Map.put(state.array, key, entry)}
+      else
+        state
       end
 
     {:reply, :ok, state}
   end
 
   def handle_call({:get, key, default}, _from, state) do
-    store = effective_store()
-
-    entry =
-      case store do
-        "array" -> Map.get(state.array, key)
-        "file" -> read_file(key) || Map.get(state.array, key)
-        "database" -> read_db(key) || Map.get(state.array, key)
-        _ -> Map.get(state.array, key)
-      end
+    store = Laravex.Cache.Resolver.effective()
+    entry = store.get(key, state)
 
     value =
       cond do
@@ -177,14 +224,8 @@ defmodule Laravex.Cache.Manager do
   end
 
   def handle_call({:forget, key}, _from, state) do
-    store = effective_store()
-
-    case store do
-      "file" -> forget_file(key)
-      "database" -> forget_db(key)
-      _ -> :ok
-    end
-
+    store = Laravex.Cache.Resolver.effective()
+    store.forget(key)
     {:reply, :ok, %{state | array: Map.delete(state.array, key)}}
   end
 
@@ -203,15 +244,8 @@ defmodule Laravex.Cache.Manager do
   end
 
   defp do_get_entry(key, state) do
-    store = effective_store()
-
-    entry =
-      case store do
-        "array" -> Map.get(state.array, key)
-        "file" -> read_file(key) || Map.get(state.array, key)
-        "database" -> read_db(key) || Map.get(state.array, key)
-        _ -> Map.get(state.array, key)
-      end
+    store = Laravex.Cache.Resolver.effective()
+    entry = store.get(key, state)
 
     value =
       cond do
@@ -224,107 +258,13 @@ defmodule Laravex.Cache.Manager do
   end
 
   defp put_entry(state, key, entry) do
-    store = effective_store()
+    store = Laravex.Cache.Resolver.effective()
+    store.put(key, entry, state)
 
-    case store do
-      "array" ->
-        %{state | array: Map.put(state.array, key, entry)}
-
-      "file" ->
-        write_file(key, entry)
-        state
-
-      "database" ->
-        write_db(key, entry)
-        %{state | array: Map.put(state.array, key, entry)}
-
-      _ ->
-        %{state | array: Map.put(state.array, key, entry)}
-    end
-  end
-
-  defp forget_file(key) do
-    path =
-      Path.join(
-        Laravex.Foundation.Application.base_path(),
-        "storage/framework/cache/data/#{Base.encode16(key)}"
-      )
-
-    _ = if File.exists?(path), do: File.rm(path)
-    :ok
-  end
-
-  defp forget_db(key) do
-    if Laravex.Database.Schema.has_table?("cache") do
-      Laravex.Database.Connection.execute("DELETE FROM cache WHERE key = ?", [key])
-    end
-
-    :ok
-  end
-
-  @supported_drivers ~w(array file database)
-
-  defp effective_store do
-    name = to_string(Laravex.Config.Repository.get("cache.default", "array"))
-    stores = Laravex.Config.Repository.get("cache.stores", %{})
-    cfg = Map.get(stores, name) || Map.get(stores, String.to_atom(name)) || %{}
-    driver = to_string(Map.get(cfg, "driver") || Map.get(cfg, :driver) || name)
-
-    unless driver in @supported_drivers do
-      raise ArgumentError,
-            "Cache store #{inspect(name)} uses unsupported driver #{inspect(driver)}. " <>
-              "Supported drivers: #{Enum.join(@supported_drivers, ", ")} " <>
-              "(set CACHE_STORE=array|file|database)."
-    end
-
-    if driver == "database" and not safe_has_cache_table?() do
-      "array"
+    if store == Laravex.Cache.Stores.Array or store == Laravex.Cache.Stores.Database do
+      %{state | array: Map.put(state.array, key, entry)}
     else
-      driver
-    end
-  end
-
-  defp safe_has_cache_table? do
-    Laravex.Database.Schema.has_table?("cache")
-  rescue
-    _ -> false
-  end
-
-  defp write_file(key, entry) do
-    dir = Path.join(Laravex.Foundation.Application.base_path(), "storage/framework/cache/data")
-    File.mkdir_p!(dir)
-    File.write!(Path.join(dir, Base.encode16(key)), :erlang.term_to_binary(entry))
-  end
-
-  defp read_file(key) do
-    path =
-      Path.join(
-        Laravex.Foundation.Application.base_path(),
-        "storage/framework/cache/data/#{Base.encode16(key)}"
-      )
-
-    if File.exists?(path), do: :erlang.binary_to_term(File.read!(path)), else: nil
-  end
-
-  defp write_db(key, entry) do
-    if Laravex.Database.Schema.has_table?("cache") do
-      Laravex.Database.Connection.execute("DELETE FROM cache WHERE key = ?", [key])
-
-      Laravex.Database.Connection.execute(
-        "INSERT INTO cache (key, value, expiration) VALUES (?, ?, ?)",
-        [key, :erlang.term_to_binary(entry) |> Base.encode64(), entry.expires || 0]
-      )
-    end
-  end
-
-  defp read_db(key) do
-    if Laravex.Database.Schema.has_table?("cache") do
-      case Laravex.Database.Connection.query("SELECT value FROM cache WHERE key = ?", [key]) do
-        [%{"value" => bin}] -> :erlang.binary_to_term(Base.decode64!(bin))
-        _ -> nil
-      end
-    else
-      nil
+      state
     end
   end
 end

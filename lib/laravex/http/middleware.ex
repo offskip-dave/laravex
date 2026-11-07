@@ -17,6 +17,7 @@ defmodule Laravex.Http.Middleware do
                 Laravex.Http.Middleware.SubstituteBindings
               ],
               "api" => [
+                Laravex.Http.Middleware.EnsureFrontendRequestsAreStateful,
                 Laravex.Http.Middleware.PreventRequestsDuringMaintenance,
                 {Laravex.Http.Middleware.ThrottleRequests, [limiter: "api"]},
                 Laravex.Http.Middleware.SubstituteBindings
@@ -68,6 +69,34 @@ defmodule Laravex.Http.Middleware do
 
   def run_web(request, %__MODULE__{} = middleware), do: run(request, web_group(middleware))
 
+  @doc "Drop plugs from a pipeline when their alias or module name is in `skip`."
+  def without(plugs, skip) when is_list(plugs) and is_list(skip) do
+    skip = MapSet.new(skip, &normalize_skip_token/1)
+    Enum.reject(plugs, &plug_skipped?(&1, skip))
+  end
+
+  defp normalize_skip_token(v) when is_atom(v), do: Atom.to_string(v) |> normalize_skip_token()
+  defp normalize_skip_token(v) when is_binary(v), do: String.trim(v)
+
+  defp plug_skipped?({mod, _opts}, skip), do: mod_skipped?(mod, skip)
+  defp plug_skipped?(mod, skip) when is_atom(mod), do: mod_skipped?(mod, skip)
+  defp plug_skipped?(_, _), do: false
+
+  defp mod_skipped?(mod, skip) do
+    full = Atom.to_string(mod)
+    short = full |> String.split(".") |> List.last()
+
+    MapSet.member?(skip, full) or MapSet.member?(skip, short) or
+      MapSet.member?(skip, alias_for_module(mod))
+  end
+
+  defp alias_for_module(Laravex.Http.Middleware.Authenticate), do: "auth"
+  defp alias_for_module(Laravex.Http.Middleware.RedirectIfAuthenticated), do: "guest"
+  defp alias_for_module(Laravex.Http.Middleware.EnsureEmailIsVerified), do: "verified"
+  defp alias_for_module(Laravex.Http.Middleware.VerifyCsrfToken), do: "csrf"
+  defp alias_for_module(Laravex.Http.Middleware.ValidateSignature), do: "signed"
+  defp alias_for_module(_), do: ""
+
   def resolve_alias(name) when is_atom(name), do: {name, []}
 
   def resolve_alias(name) when is_binary(name) do
@@ -115,6 +144,9 @@ defmodule Laravex.Http.Middleware do
           |> Enum.map(&String.trim/1)
 
         {Laravex.Http.Middleware.CheckTokenAbility, abilities: list}
+
+      "sanctum.stateful" ->
+        {Laravex.Http.Middleware.EnsureFrontendRequestsAreStateful, []}
 
       "throttle" ->
         opts =

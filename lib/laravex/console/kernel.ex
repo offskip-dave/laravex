@@ -19,6 +19,9 @@ defmodule Laravex.Console.Kernel do
     "config:clear" => {&__MODULE__.cmd_config_clear/1, "Clear configuration cache"},
     "route:cache" => {&__MODULE__.cmd_route_cache/1, "Cache the route collection"},
     "route:clear" => {&__MODULE__.cmd_route_clear/1, "Remove the route cache file"},
+    "route:match" => {&__MODULE__.cmd_route_match/1, "Match a route for method and URI"},
+    "cache:clear" => {&__MODULE__.cmd_cache_clear/1, "Flush the application cache"},
+    "cache:forget" => {&__MODULE__.cmd_cache_forget/1, "Remove an item from the cache"},
     "view:cache" => {&__MODULE__.cmd_view_cache/1, "Cache views"},
     "view:clear" => {&__MODULE__.cmd_view_clear/1, "Clear compiled views"},
     "optimize" => {&__MODULE__.cmd_optimize/1, "Cache framework bootstrap files"},
@@ -61,6 +64,10 @@ defmodule Laravex.Console.Kernel do
     "make:resource" => {&__MODULE__.cmd_make_resource/1, "Create an API resource"},
     "make:factory" => {&__MODULE__.cmd_make_factory/1, "Create a factory"},
     "make:seeder" => {&__MODULE__.cmd_make_seeder/1, "Create a seeder"},
+    "make:view" => {&__MODULE__.cmd_make_view/1, "Create a Blade view"},
+    "make:test" => {&__MODULE__.cmd_make_test/1, "Create a test class"},
+    "make:observer" => {&__MODULE__.cmd_make_observer/1, "Create a model observer"},
+    "make:enum" => {&__MODULE__.cmd_make_enum/1, "Create an enum"},
     "install:api" => {&__MODULE__.cmd_install_api/1, "Install API routes and tokens"},
     "install:broadcasting" => {&__MODULE__.cmd_install_broadcasting/1, "Install broadcasting"},
     "install:starter-kit" => {&__MODULE__.cmd_install_starter/1, "Install auth starter kit"}
@@ -181,6 +188,40 @@ defmodule Laravex.Console.Kernel do
     Laravex.Routing.RouteCache.clear!()
     IO.puts("Route cache cleared.")
   end
+
+  def cmd_route_match([method, uri | _]) do
+    request = Laravex.Http.Request.capture(method, uri)
+
+    case Laravex.Routing.Router.match(request) do
+      :error ->
+        IO.puts("No matching route for #{String.upcase(method)} #{uri}")
+
+      {:ok, req, handler, opts} ->
+        name = Keyword.get(opts, :name, "—")
+        IO.puts("MATCH  #{String.upcase(method)} #{uri}")
+        IO.puts("  name:   #{name}")
+        IO.puts("  params: #{inspect(req.route_params)}")
+        IO.puts("  action: #{inspect(handler)}")
+    end
+
+    :ok
+  end
+
+  def cmd_route_match(_), do: usage("route:match", "{method} {uri}")
+
+  def cmd_cache_clear(_) do
+    Laravex.Cache.Manager.flush()
+    IO.puts("Application cache cleared.")
+    :ok
+  end
+
+  def cmd_cache_forget([key | _]) do
+    Laravex.Cache.Manager.forget(key)
+    IO.puts("Removed cache key #{key}")
+    :ok
+  end
+
+  def cmd_cache_forget(_), do: usage("cache:forget", "{key}")
 
   def cmd_view_cache(_) do
     n = Laravex.View.Cache.warm()
@@ -557,6 +598,22 @@ defmodule Laravex.Console.Kernel do
   def cmd_make_factory(_), do: usage("make:factory", "Name")
   def cmd_make_seeder([name | _]), do: Laravex.Generators.make_seeder(name)
   def cmd_make_seeder(_), do: usage("make:seeder", "Name")
+
+  def cmd_make_view([name | _]), do: Laravex.Generators.make_view(name)
+  def cmd_make_view(_), do: usage("make:view", "name")
+
+  def cmd_make_test([name | rest]) do
+    unit? = "--unit" in rest or "-u" in rest
+    Laravex.Generators.make_test(name, unit: unit?)
+  end
+
+  def cmd_make_test(_), do: usage("make:test", "Name [--unit]")
+
+  def cmd_make_observer([name | _]), do: Laravex.Generators.make_observer(name)
+  def cmd_make_observer(_), do: usage("make:observer", "Name")
+
+  def cmd_make_enum([name | _]), do: Laravex.Generators.make_enum(name)
+  def cmd_make_enum(_), do: usage("make:enum", "Name")
 
   def cmd_install_api(_), do: Laravex.Install.api()
   def cmd_install_broadcasting(_), do: Laravex.Install.broadcasting()

@@ -13,6 +13,7 @@ defmodule Laravex.TestCase do
   setup do
     Process.delete(:laravex_acting_as)
     Process.delete(:laravex_request)
+    Process.delete(:laravex_without_middleware)
     _ = Laravex.Foundation.Server.boot!()
     :ok
   end
@@ -26,6 +27,12 @@ defmodule Laravex.TestCase do
 
   def without_acting_as do
     Process.delete(:laravex_acting_as)
+    :ok
+  end
+
+  @doc "Omit route middleware by alias or module name for subsequent HTTP calls in this process."
+  def without_middleware(names) when is_list(names) do
+    Process.put(:laravex_without_middleware, Enum.map(names, &to_string/1))
     :ok
   end
 
@@ -151,6 +158,23 @@ defmodule Laravex.TestCase do
     case Process.get(:laravex_request) do
       %{session: session} when is_map(session) -> Map.get(session, to_string(key), default)
       _ -> default
+    end
+  end
+
+  def assert_database_has(table, attrs) when is_binary(table) and is_map(attrs) do
+    attrs = Laravex.Database.Model.stringify(attrs)
+
+    query =
+      Enum.reduce(attrs, Laravex.Database.Query.table(table), fn {column, value}, q ->
+        Laravex.Database.Query.where(q, column, value)
+      end)
+
+    case Laravex.Database.Query.first(query) do
+      nil ->
+        flunk("Failed asserting that table #{inspect(table)} has #{inspect(attrs)}")
+
+      _row ->
+        :ok
     end
   end
 

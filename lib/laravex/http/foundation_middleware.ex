@@ -155,7 +155,14 @@ defmodule Laravex.Http.Middleware.SetCacheHeaders do
 
     headers =
       if Keyword.get(opts, :etag) do
-        etag = :crypto.hash(:sha256, response.body) |> Base.encode16(case: :lower)
+        body_for_hash =
+          case response.body do
+            {:stream, path} when is_binary(path) -> File.read!(path)
+            bin when is_binary(bin) -> bin
+            _ -> ""
+          end
+
+        etag = :crypto.hash(:sha256, body_for_hash) |> Base.encode16(case: :lower)
         [{"etag", ~s("#{etag}")} | headers]
       else
         headers

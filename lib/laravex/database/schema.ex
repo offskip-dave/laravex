@@ -63,7 +63,7 @@ defmodule Laravex.Database.Schema do
 end
 
 defmodule Laravex.Database.Blueprint do
-  defstruct table: nil, columns: [], indexes: [], mode: :create, drops: []
+  defstruct table: nil, columns: [], indexes: [], mode: :create, drops: [], foreign_drops: []
 
   def new(table), do: %__MODULE__{table: table, mode: :create}
 
@@ -81,6 +81,37 @@ defmodule Laravex.Database.Blueprint do
   def timestamps(bp), do: bp |> string("created_at", nullable: true) |> string("updated_at", nullable: true)
   def remember_token(bp), do: string(bp, "remember_token", nullable: true)
   def foreign_id(bp, name, opts \\ []), do: col(bp, name, "INTEGER", opts)
+
+  @doc """
+  Add an inline SQLite `REFERENCES` clause to the last column (Laravel `constrained`).
+
+      foreign_id(bp, "user_id") |> constrained("users")
+  """
+  def constrained(bp, table \\ nil, opts \\ []) do
+    case bp.columns do
+      [] ->
+        bp
+
+      [last | rest] ->
+        column = column_name_from_sql(last)
+        table = table || infer_referenced_table(column)
+        ref_col = Keyword.get(opts, :column, "id")
+        on_delete = references_on_delete(Keyword.get(opts, :on_delete))
+
+        updated =
+          last <>
+            " REFERENCES #{table}(#{ref_col})" <>
+            on_delete
+
+        %{bp | columns: [updated | rest]}
+    end
+  end
+
+  @doc "Record a foreign key drop (SQLite cannot drop FK inline; no-op on alter)."
+  def drop_foreign(bp, column) do
+    col = to_string(column)
+    %{bp | foreign_drops: [col | bp.foreign_drops]}
+  end
 
   @doc "Add `deleted_at` nullable timestamp for Eloquex soft deletes."
   def soft_deletes(bp, column \\ "deleted_at") do
@@ -174,7 +205,8 @@ defmodule Laravex.Database.Blueprint do
       "#{name} #{type}" <>
         if(primary, do: " PRIMARY KEY", else: "") <>
         if(nullable or primary, do: "", else: " NOT NULL") <>
-        if(unique, do: " UNIQUE", else: "")
+        if(unique, do: " UNIQUE", else: "") <>
+        inline_references(opts, name)
 
     bp = add(bp, sql)
 
@@ -185,4 +217,48 @@ defmodule Laravex.Database.Blueprint do
   end
 
   defp add(bp, sql), do: %{bp | columns: [sql | bp.columns]}
+
+  defp inline_references(opts, column_name) do
+    cond do
+      ref = Keyword.get(opts, :references) ->
+        ref_col = Keyword.get(opts, :column, "id")
+        on_delete = references_on_delete(Keyword.get(opts, :on_delete))
+        " REFERENCES #{ref}(#{ref_col})" <> on_delete
+
+      Keyword.get(opts, :constrained) == true ->
+        table = infer_referenced_table(column_name)
+        ref_col = Keyword.get(opts, :column, "id")
+        on_delete = references_on_delete(Keyword.get(opts, :on_delete))
+        " REFERENCES #{table}(#{ref_col})" <> on_delete
+
+      is_binary(Keyword.get(opts, :constrained)) ->
+        table = Keyword.get(opts, :constrained)
+        ref_col = Keyword.get(opts, :column, "id")
+        on_delete = references_on_delete(Keyword.get(opts, :on_delete))
+        " REFERENCES #{table}(#{ref_col})" <> on_delete
+
+      true ->
+        ""
+    end
+  end
+
+  defp references_on_delete(nil), do: ""
+  defp references_on_delete(action) when is_atom(action), do: " ON DELETE #{String.upcase(to_string(action))}"
+  defp references_on_delete(action) when is_binary(action), do: " ON DELETE #{String.upcase(action)}"
+
+  defp column_name_from_sql(sql) do
+    sql |> String.split(" ", parts: 2) |> List.first() |> to_string()
+  end
+
+  defp infer_referenced_table(column) do
+    column = to_string(column)
+
+    base =
+      cond do
+        String.ends_with?(column, "_id") -> String.replace_suffix(column, "_id", "")
+        true -> column
+      end
+
+    base <> "s"
+  end
 end
