@@ -20,5 +20,6 @@ env = &Laravex.Env.get/2
   "maintenance" => %{
     "driver" => env.("APP_MAINTENANCE_DRIVER", "file"),
     "store" => env.("APP_MAINTENANCE_STORE", "database")
-  }
+  },
+  "trusted_proxies" => env.("TRUSTED_PROXIES", nil)
 }

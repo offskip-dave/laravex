@@ -19,7 +19,13 @@ defmodule Laravex.Http.UrlSigner do
     path_only <> "?" <> query
   end
 
-  def valid?(path_or_request) do
+  def valid?(path_or_request, opts \\ []) do
+    ignore =
+      opts
+      |> Keyword.get(:ignore, [])
+      |> List.wrap()
+      |> Enum.map(&to_string/1)
+
     {path, query} =
       case path_or_request do
         %Laravex.Http.Request{path: path, query: query} ->
@@ -40,7 +46,11 @@ defmodule Laravex.Http.UrlSigner do
         false
 
       true ->
-        params = Map.delete(query, "signature")
+        params =
+          query
+          |> Map.delete("signature")
+          |> Map.drop(ignore)
+
         expected = hmac(payload(path, params))
         secure_compare(expected, signature)
     end

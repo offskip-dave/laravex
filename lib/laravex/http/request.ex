@@ -70,6 +70,19 @@ defmodule Laravex.Http.Request do
   def expects_json?(%__MODULE__{expects_json: true}), do: true
   def expects_json?(%__MODULE__{}), do: false
 
+  @doc "Client IP after TrustProxies (falls back to X-Real-IP / 127.0.0.1)."
+  def ip(%__MODULE__{} = request) do
+    Process.get(:laravex_client_ip) || header(request, "x-real-ip") || "127.0.0.1"
+  end
+
+  @doc "Whether the request is HTTPS after TrustProxies."
+  def secure?(%__MODULE__{} = _request) do
+    case Process.get(:laravex_client_secure) do
+      true -> true
+      _ -> false
+    end
+  end
+
   def validate(%__MODULE__{} = request, rules) do
     Laravex.Validation.validate(request.params, rules)
   end

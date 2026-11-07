@@ -14,8 +14,8 @@ defmodule Bootstrap.App do
       commands: Path.join(base_path, "routes/console.ex"),
       health: "/up"
     )
-    |> Application.with_middleware(fn _middleware ->
-      :ok
+    |> Application.with_middleware(fn middleware ->
+      middleware
     end)
     |> Application.with_exceptions(fn exceptions ->
       Exceptions.should_render_json_when(exceptions, fn request ->

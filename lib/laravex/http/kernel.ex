@@ -2,6 +2,8 @@ defmodule Laravex.Http.Kernel do
   @moduledoc false
 
   def handle(%Laravex.Http.Request{} = request, app) do
+    clear_request_process()
+
     case Laravex.Routing.Router.match(request) do
       :error ->
         not_found()
@@ -123,22 +125,39 @@ defmodule Laravex.Http.Kernel do
   defp resolve_plugs(middleware, opts) do
     groups = Keyword.get(opts, :middleware, ["web"])
 
-    groups
-    |> List.wrap()
-    |> Enum.flat_map(fn
-      "web" -> Laravex.Http.Middleware.web_group(middleware)
-      "api" -> Laravex.Http.Middleware.api_group(middleware)
-      other when is_atom(other) -> [{other, []}]
-      other when is_binary(other) -> [Laravex.Http.Middleware.resolve_alias(other)]
-      {mod, plug_opts} when is_atom(mod) -> [{mod, plug_opts}]
-      _ -> []
-    end)
+    group_plugs =
+      groups
+      |> List.wrap()
+      |> Enum.flat_map(fn
+        "web" -> Laravex.Http.Middleware.web_group(middleware)
+        "api" -> Laravex.Http.Middleware.api_group(middleware)
+        other when is_atom(other) -> [{other, []}]
+        other when is_binary(other) -> [Laravex.Http.Middleware.resolve_alias(other)]
+        {mod, plug_opts} when is_atom(mod) -> [{mod, plug_opts}]
+        _ -> []
+      end)
+
+    Laravex.Http.Middleware.global(middleware) ++ group_plugs
   end
 
   defp not_found do
     Laravex.Http.Response.html(
       "<!DOCTYPE html><html><body><h1>404</h1><p>Not Found</p></body></html>",
       404
+    )
+  end
+
+  defp clear_request_process do
+    Enum.each(
+      [
+        :laravex_request,
+        :laravex_remember_cookie,
+        :laravex_cors_request,
+        :laravex_client_ip,
+        :laravex_client_secure,
+        :laravex_client_host
+      ],
+      &Process.delete/1
     )
   end
 

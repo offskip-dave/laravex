@@ -43,11 +43,15 @@ defmodule Laravex.Foundation.Application do
 
     middleware =
       if app.middleware_callback do
-        app.middleware_callback.(middleware)
-        middleware
+        case app.middleware_callback.(middleware) do
+          %Laravex.Http.Middleware{} = updated -> updated
+          _ -> middleware
+        end
       else
         middleware
       end
+
+    warn_missing_app_key()
 
     exceptions = Laravex.Foundation.Exceptions.new()
 
@@ -130,5 +134,19 @@ defmodule Laravex.Foundation.Application do
     if Code.ensure_loaded?(mod) and function_exported?(mod, :register, 0) do
       apply(mod, :register, [])
     end
+  end
+
+  defp warn_missing_app_key do
+    key = Laravex.Config.Repository.get("app.key") || Laravex.Env.get("APP_KEY")
+
+    if (is_nil(key) or key == "") and not testing?() and not Application.get_env(:laravex, :app_key_warned, false) do
+      Application.put_env(:laravex, :app_key_warned, true)
+      IO.puts(:stderr, "WARNING: APP_KEY is not set. Run `./artisan key:generate`.")
+    end
+  end
+
+  defp testing? do
+    (Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) and Mix.env() == :test) or
+      Laravex.Env.get("APP_ENV") in ["testing", "test"]
   end
 end

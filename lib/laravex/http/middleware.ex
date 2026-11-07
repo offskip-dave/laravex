@@ -17,9 +17,16 @@ defmodule Laravex.Http.Middleware do
               ],
               "api" => [
                 Laravex.Http.Middleware.PreventRequestsDuringMaintenance,
+                {Laravex.Http.Middleware.ThrottleRequests, [limiter: "api"]},
                 Laravex.Http.Middleware.SubstituteBindings
               ]
             },
+            global: [
+              Laravex.Http.Middleware.TrustProxies,
+              Laravex.Http.Middleware.HandleCors,
+              Laravex.Http.Middleware.TrimStrings,
+              Laravex.Http.Middleware.ConvertEmptyStringsToNull
+            ],
             aliases: %{},
             csrf_except: []
 
@@ -30,6 +37,20 @@ defmodule Laravex.Http.Middleware do
     %{middleware | groups: groups}
   end
 
+  def prepend_to_group(%__MODULE__{} = middleware, group, plug) do
+    groups = Map.update(middleware.groups, group, [plug], fn existing -> [plug | existing] end)
+    %{middleware | groups: groups}
+  end
+
+  def append_global(%__MODULE__{} = middleware, plug) do
+    %{middleware | global: middleware.global ++ [plug]}
+  end
+
+  def prepend_global(%__MODULE__{} = middleware, plug) do
+    %{middleware | global: [plug | middleware.global]}
+  end
+
+  def global(%__MODULE__{} = m), do: m.global || []
   def web_group(%__MODULE__{} = m), do: Map.get(m.groups, "web", [])
   def api_group(%__MODULE__{} = m), do: Map.get(m.groups, "api", [])
 

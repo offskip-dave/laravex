@@ -33,6 +33,37 @@ defmodule Laravex.Env do
     end
   end
 
+  def all do
+    Application.get_env(:laravex, :env, %{})
+  end
+
+  @doc "Write or replace a key in the project `.env` file and reload."
+  def write!(key, value, base_path \\ nil) when is_binary(key) do
+    base_path = base_path || Laravex.Foundation.Application.base_path()
+    path = Path.join(base_path, ".env")
+    line = "#{key}=#{value}"
+
+    contents =
+      if File.exists?(path) do
+        File.read!(path)
+      else
+        example = Path.join(base_path, ".env.example")
+        if File.exists?(example), do: File.read!(example), else: ""
+      end
+
+    updated =
+      if Regex.match?(~r/^#{Regex.escape(key)}=/m, contents) do
+        Regex.replace(~r/^#{Regex.escape(key)}=.*$/m, contents, line)
+      else
+        trim = String.trim_trailing(contents)
+        if trim == "", do: line <> "\n", else: trim <> "\n" <> line <> "\n"
+      end
+
+    File.write!(path, updated)
+    load!(base_path)
+    :ok
+  end
+
   defp parse(contents) do
     contents
     |> String.split(~r/\r?\n/)

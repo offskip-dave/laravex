@@ -24,6 +24,8 @@ defmodule Laravex.Console.Kernel do
     "down" => {&__MODULE__.cmd_down/1, "Put the application into maintenance mode"},
     "up" => {&__MODULE__.cmd_up/1, "Bring the application out of maintenance mode"},
     "about" => {&__MODULE__.cmd_about/1, "Display basic application information"},
+    "env" => {&__MODULE__.cmd_env/1, "Display the current framework environment"},
+    "key:generate" => {&__MODULE__.cmd_key_generate/1, "Set the application key"},
     "test" => {&__MODULE__.cmd_test/1, "Run the test suite"},
     "make:model" => {&__MODULE__.cmd_make_model/1, "Create a new model class"},
     "make:controller" => {&__MODULE__.cmd_make_controller/1, "Create a controller"},
@@ -171,15 +173,51 @@ defmodule Laravex.Console.Kernel do
     env = Laravex.Config.Repository.get("app.env", "local")
     debug = Laravex.Config.Repository.get("app.debug", false)
     maintenance = Laravex.Foundation.Maintenance.enabled?()
+    key? = present?(Laravex.Config.Repository.get("app.key") || Laravex.Env.get("APP_KEY"))
 
     IO.puts("""
     #{name}
       Environment ................ #{env}
       Debug ...................... #{debug}
       Maintenance ................ #{maintenance}
+      APP_KEY .................... #{if key?, do: "set", else: "missing"}
       Elixir ..................... #{System.version()}
       OTP ........................ #{:erlang.system_info(:otp_release)}
     """)
+  end
+
+  def cmd_env(args) do
+    only =
+      Enum.find_value(args, fn
+        "--only=" <> key -> key
+        _ -> nil
+      end)
+
+    env = Laravex.Env.all()
+
+    env
+    |> Enum.sort_by(fn {k, _} -> k end)
+    |> Enum.each(fn {k, v} ->
+      if is_nil(only) or only == k do
+        IO.puts("#{k}=#{redact_env(k, v)}")
+      end
+    end)
+
+    :ok
+  end
+
+  def cmd_key_generate(args) do
+    force? = "--force" in args
+    existing = Laravex.Env.get("APP_KEY")
+
+    if present?(existing) and not force? do
+      IO.puts("APP_KEY already set. Use --force to overwrite.")
+    else
+      key = "base64:" <> Base.encode64(:crypto.strong_rand_bytes(32))
+      Laravex.Env.write!("APP_KEY", key)
+      Laravex.Config.Repository.load!(Laravex.Foundation.Application.base_path())
+      IO.puts("Application key set successfully.")
+    end
   end
 
   def cmd_test(_), do: Mix.Task.run("test")
@@ -246,6 +284,19 @@ defmodule Laravex.Console.Kernel do
       "--secret=" <> s, acc -> Keyword.put(acc, :secret, s)
       _, acc -> acc
     end)
+  end
+
+  defp present?(v), do: not (is_nil(v) or v == "")
+
+  defp redact_env(key, value) do
+    sensitive = ~w(KEY SECRET PASSWORD TOKEN PRIVATE)
+    upper = String.upcase(to_string(key))
+
+    if Enum.any?(sensitive, &String.contains?(upper, &1)) and present?(value) do
+      "********"
+    else
+      inspect(value)
+    end
   end
 
   defp tinker_loop(bindings) do

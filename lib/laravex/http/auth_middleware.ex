@@ -98,7 +98,7 @@ defmodule Laravex.Http.Middleware.ThrottleRequests do
 
     max = Keyword.get(opts, :max, 60)
     decay = Keyword.get(opts, :decay, 1)
-    ip = Laravex.Http.Request.header(request, "x-forwarded-for") || "127.0.0.1"
+    ip = Laravex.Http.Request.ip(request)
     limiter = Keyword.get(opts, :limiter, "default")
     key = "throttle:#{limiter}:#{ip}:#{request.method}:#{request.path}"
 
@@ -118,11 +118,15 @@ end
 defmodule Laravex.Http.Middleware.ValidateSignature do
   @moduledoc "Require a valid signed URL (`signed` alias)."
 
-  def handle(request, _opts) do
-    if Laravex.Http.UrlSigner.valid?(request) do
+  def handle(request, opts) do
+    if Laravex.Http.UrlSigner.valid?(request, opts) do
       {:ok, request}
     else
-      {:halt, Laravex.Http.Response.html("Invalid signature.", 403)}
+      if Laravex.Http.Request.expects_json?(request) do
+        {:halt, Laravex.Http.Response.json(%{message: "Invalid signature."}, 403)}
+      else
+        {:halt, Laravex.Http.Response.html("Invalid signature.", 403)}
+      end
     end
   end
 end
