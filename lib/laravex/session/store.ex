@@ -54,6 +54,13 @@ defmodule Laravex.Session.Store do
     {value, %{request | session: Map.delete(session, k)}}
   end
 
+  def all(%{session: session}), do: session
+
+  def only(%{session: session}, keys) when is_list(keys) do
+    keys = Enum.map(keys, &to_string/1)
+    Map.take(session, keys)
+  end
+
   @doc "Flash data for the *next* request (Laravel session()->flash)."
   def flash(request, key, value) do
     bag = flash_bag(request.session)
@@ -67,6 +74,24 @@ defmodule Laravex.Session.Store do
     Process.put(:laravex_flash_now, Map.put(now, to_string(key), value))
     flash = Map.merge(request.flash || %{}, %{to_string(key) => value})
     %{request | flash: flash}
+  end
+
+  @doc "Keep selected flash keys for another request (Laravel `keep`)."
+  def keep(%{session: session} = request, keys) when is_list(keys) do
+    bag = flash_bag(session)
+    old = bag["old"] || %{}
+    keys = Enum.map(keys, &to_string/1)
+    kept = Map.take(old, keys)
+    new = Map.merge(bag["new"] || %{}, kept)
+    put(request, "_flash", %{"old" => old, "new" => new})
+  end
+
+  @doc "Keep all current flash for another request (Laravel `reflash`)."
+  def reflash(%{session: session} = request) do
+    bag = flash_bag(session)
+    old = bag["old"] || %{}
+    new = Map.merge(bag["new"] || %{}, old)
+    put(request, "_flash", %{"old" => old, "new" => new})
   end
 
   def flash_bag(session) when is_map(session) do

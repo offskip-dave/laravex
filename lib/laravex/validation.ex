@@ -394,6 +394,16 @@ defmodule Laravex.Validation do
           do: [],
           else: ["The #{field} field must be a valid UUID."]
 
+      "ulid" ->
+        if is_nil(value) or blank?(value) or Laravex.Support.Str.is_ulid?(value),
+          do: [],
+          else: ["The #{field} field must be a valid ULID."]
+
+      "mac_address" ->
+        if is_nil(value) or blank?(value) or Laravex.Support.Str.is_mac_address?(value),
+          do: [],
+          else: ["The #{field} field must be a valid MAC address."]
+
       "after:" <> other ->
         date_compare_rule(field, value, data, String.trim(other), :after)
 

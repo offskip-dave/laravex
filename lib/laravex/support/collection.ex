@@ -26,6 +26,46 @@ defmodule Laravex.Support.Collection do
   def is_empty?(%__MODULE__{}), do: false
   def is_not_empty?(c), do: not is_empty?(c)
 
+  def keys(%__MODULE__{items: items}) do
+    keys =
+      if items == [] or Enum.any?(items, &match?({_, _}, &1)) do
+        Enum.flat_map(items, fn
+          {k, _} -> [k]
+          _ -> []
+        end)
+      else
+        Enum.with_index(items) |> Enum.map(fn {_, i} -> i end)
+      end
+
+    new(keys)
+  end
+
+  def flip(%__MODULE__{items: items}) do
+    new(
+      case items do
+        [{_, _} | _] = pairs -> Enum.map(pairs, fn {k, v} -> {v, k} end)
+        [] -> []
+        list -> Enum.with_index(list) |> Enum.map(fn {v, i} -> {v, i} end)
+      end
+    )
+  end
+
+  def sort_keys(%__MODULE__{items: items}, desc \\ false) do
+    sorted =
+      if Enum.any?(items, &match?({_, _}, &1)) do
+        items
+        |> Enum.sort_by(fn
+          {k, _} -> to_string(k)
+          other -> to_string(other)
+        end)
+        |> then(fn s -> if desc, do: Enum.reverse(s), else: s end)
+      else
+        items
+      end
+
+    new(sorted)
+  end
+
   def pluck(%__MODULE__{items: items}, key) when is_atom(key) or is_binary(key) do
     key_atom = if is_binary(key), do: String.to_atom(key), else: key
     key_str = to_string(key)

@@ -74,6 +74,8 @@ defmodule Laravex.Auth.Guard do
 
   def check?(request), do: user(request) != nil
 
+  def guest?(request), do: not check?(request)
+
   def id(request) do
     case user(request) do
       %{id: id} -> id

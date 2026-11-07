@@ -116,6 +116,12 @@ defmodule Laravex.Support.Str do
 
   def is_uuid?(_), do: false
 
+  def is_ulid?(s) when is_binary(s) do
+    Regex.match?(~r/\A[0-9A-HJKMNP-TV-Z]{26}\z/i, s)
+  end
+
+  def is_ulid?(_), do: false
+
   def is_json?(s) when is_binary(s) do
     match?({:ok, _}, Laravex.Support.JSON.decode(s))
   end
@@ -124,6 +130,12 @@ defmodule Laravex.Support.Str do
 
   def is_ip?(s) when is_binary(s), do: is_ipv4?(s) or is_ipv6?(s)
   def is_ip?(_), do: false
+
+  def is_mac_address?(s) when is_binary(s) do
+    Regex.match?(~r/\A([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})\z/, s)
+  end
+
+  def is_mac_address?(_), do: false
 
   def is_ipv4?(s) when is_binary(s) do
     match?({:ok, _}, :inet.parse_ipv4_address(String.to_charlist(s)))
@@ -151,6 +163,24 @@ defmodule Laravex.Support.Str do
 
     :io_lib.format("~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b", [a, b, c, d, e])
     |> IO.iodata_to_binary()
+  end
+
+  @doc "Generate a Crockford Base32 ULID (Laravel `Str::ulid`)."
+  def ulid do
+    ms = System.system_time(:millisecond)
+    <<rand::80>> = :crypto.strong_rand_bytes(10)
+    encode_crockford(ms, 10) <> encode_crockford(rand, 16)
+  end
+
+  defp encode_crockford(int, len) when is_integer(int) and is_integer(len) do
+    alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+    {chars, _} =
+      Enum.reduce(1..len, {[], int}, fn _, {acc, n} ->
+        {[String.at(alphabet, rem(n, 32)) | acc], div(n, 32)}
+      end)
+
+    Enum.join(chars)
   end
 
   def replace(subject, search, replace, _opts \\ []) do

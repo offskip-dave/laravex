@@ -51,6 +51,26 @@ defmodule Laravex.Http.Request do
 
   def all(%__MODULE__{params: params}), do: params
 
+  def keys(%__MODULE__{params: params}) do
+    params |> Map.keys() |> Enum.map(&to_string/1)
+  end
+
+  @doc "Wrap input as a Collection (Laravel `collect`). With a key, wraps that input value."
+  def collect(%__MODULE__{} = request, key \\ nil) do
+    data =
+      if is_nil(key) do
+        request.params
+      else
+        case input(request, key) do
+          list when is_list(list) -> list
+          %{} = map -> map
+          other -> List.wrap(other)
+        end
+      end
+
+    Laravex.Support.Collection.new(data)
+  end
+
   def only(%__MODULE__{params: params}, keys) when is_list(keys) do
     keys = Enum.map(keys, &to_string/1)
 
