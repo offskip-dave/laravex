@@ -91,13 +91,49 @@ defmodule Laravex.Support.Collection do
 
   def sum(%__MODULE__{items: items}) do
     Enum.reduce(items, 0, fn
-      n when is_number(n) -> n + 0
-      _ -> 0
+      n, acc when is_number(n) -> acc + n
+      _, acc -> acc
     end)
   end
 
   def sum(%__MODULE__{} = c, key) do
     c |> pluck(key) |> sum()
+  end
+
+  def sort_by(%__MODULE__{items: items}, key) when is_atom(key) or is_binary(key) do
+    key_atom = if is_binary(key), do: String.to_atom(key), else: key
+    key_str = to_string(key)
+
+    new(
+      Enum.sort_by(items, fn
+        map when is_map(map) -> Map.get(map, key_atom) || Map.get(map, key_str)
+        other -> other
+      end)
+    )
+  end
+
+  def sort_by(%__MODULE__{items: items}, fun) when is_function(fun, 1) do
+    new(Enum.sort_by(items, fun))
+  end
+
+  def first_where(%__MODULE__{} = c, key, value) do
+    c |> where(key, value) |> first()
+  end
+
+  def first_where(%__MODULE__{items: items}, fun) when is_function(fun, 1) do
+    Enum.find(items, fun)
+  end
+
+  def flat_map(%__MODULE__{items: items}, fun) when is_function(fun, 1) do
+    new(
+      Enum.flat_map(items, fn item ->
+        case fun.(item) do
+          %__MODULE__{items: nested} -> nested
+          list when is_list(list) -> list
+          other -> [other]
+        end
+      end)
+    )
   end
 
   def only(%__MODULE__{items: items}, keys) when is_list(keys) do

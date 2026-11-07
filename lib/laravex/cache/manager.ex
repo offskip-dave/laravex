@@ -83,13 +83,25 @@ defmodule Laravex.Cache.Manager do
 
   def handle_call(:flush, _from, _state), do: {:reply, :ok, %{array: %{}}}
 
-  defp effective_store do
-    store = Laravex.Config.Repository.get("cache.default", "array")
+  @supported_drivers ~w(array file database)
 
-    if store == "database" and not safe_has_cache_table?() do
+  defp effective_store do
+    name = to_string(Laravex.Config.Repository.get("cache.default", "array"))
+    stores = Laravex.Config.Repository.get("cache.stores", %{})
+    cfg = Map.get(stores, name) || Map.get(stores, String.to_atom(name)) || %{}
+    driver = to_string(Map.get(cfg, "driver") || Map.get(cfg, :driver) || name)
+
+    unless driver in @supported_drivers do
+      raise ArgumentError,
+            "Cache store #{inspect(name)} uses unsupported driver #{inspect(driver)}. " <>
+              "Supported drivers: #{Enum.join(@supported_drivers, ", ")} " <>
+              "(set CACHE_STORE=array|file|database)."
+    end
+
+    if driver == "database" and not safe_has_cache_table?() do
       "array"
     else
-      store
+      driver
     end
   end
 

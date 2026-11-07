@@ -159,6 +159,8 @@ defmodule Laravex.Http.Kernel do
         :laravex_remember_cookie,
         :laravex_cors_request,
         :laravex_cache_headers,
+        :laravex_queued_cookies,
+        :laravex_peer,
         :laravex_client_ip,
         :laravex_client_secure,
         :laravex_client_host

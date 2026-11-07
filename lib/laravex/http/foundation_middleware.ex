@@ -191,11 +191,17 @@ defmodule Laravex.Http.Middleware.TrustProxies do
     {:ok, request}
   end
 
-  defp trusted?(_request) do
+  defp trusted?(request) do
     case trusted_proxies() do
-      :all -> true
-      [] -> false
-      _list -> true
+      :all ->
+        true
+
+      [] ->
+        false
+
+      list ->
+        peer = request.peer || Process.get(:laravex_peer)
+        is_binary(peer) and Enum.any?(list, &match_proxy?(&1, peer))
     end
   end
 
@@ -208,9 +214,48 @@ defmodule Laravex.Http.Middleware.TrustProxies do
       is_nil(raw) or raw == "" or raw == false -> []
       raw in ["*", true, "true"] -> :all
       is_binary(raw) -> String.split(raw, ",", trim: true)
-      is_list(raw) -> raw
+      is_list(raw) -> Enum.map(raw, &to_string/1)
       true -> []
     end
+  end
+
+  defp match_proxy?(pattern, peer) do
+    pattern = String.trim(to_string(pattern))
+    peer = String.trim(to_string(peer))
+
+    cond do
+      pattern == peer -> true
+      String.contains?(pattern, "/") -> in_cidr?(peer, pattern)
+      true -> false
+    end
+  end
+
+  defp in_cidr?(ip, cidr) do
+    case String.split(cidr, "/") do
+      [base, bits] ->
+        with {:ok, ip_t} <- :inet.parse_address(String.to_charlist(ip)),
+             {:ok, base_t} <- :inet.parse_address(String.to_charlist(base)),
+             {bits_i, ""} <- Integer.parse(bits),
+             true <- tuple_size(ip_t) == 4 and tuple_size(base_t) == 4 do
+          mask = ipv4_mask(bits_i)
+          Bitwise.band(ipv4_int(ip_t), mask) == Bitwise.band(ipv4_int(base_t), mask)
+        else
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp ipv4_int({a, b, c, d}), do: a * 16_777_216 + b * 65_536 + c * 256 + d
+
+  defp ipv4_mask(0), do: 0
+
+  defp ipv4_mask(bits) when bits in 1..32 do
+    Bitwise.bsl(0xFFFFFFFF, 32 - bits) |> Bitwise.band(0xFFFFFFFF)
   end
 
   defp first_forwarded(nil), do: nil

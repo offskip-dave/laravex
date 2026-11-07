@@ -121,6 +121,21 @@ defmodule Laravex.Support.Helpers do
 
   def collect(enumerable), do: Laravex.Support.Collection.new(enumerable)
 
+  def cookie(name) when is_binary(name) or is_atom(name) do
+    case Process.get(:laravex_request) do
+      %{cookies: cookies} when is_map(cookies) ->
+        Map.get(cookies, to_string(name))
+
+      _ ->
+        nil
+    end
+  end
+
+  def cookie(name, value, opts \\ []) do
+    Laravex.Http.CookieJar.queue(name, value, opts)
+    value
+  end
+
   def paginator_links(pager, path \\ "/"), do: Laravex.Http.Paginator.links(pager, path)
 
   def str, do: Laravex.Support.Str

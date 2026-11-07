@@ -7,6 +7,7 @@ defmodule Laravex.Http.Middleware do
               "web" => [
                 Laravex.Http.Middleware.PreventRequestsDuringMaintenance,
                 Laravex.Http.Middleware.EncryptCookies,
+                Laravex.Http.Middleware.AddQueuedCookies,
                 Laravex.Http.Middleware.StartSession,
                 Laravex.Http.Middleware.AuthenticateSession,
                 Laravex.Http.Middleware.MethodOverride,

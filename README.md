@@ -35,7 +35,7 @@ mix test
 | Foundation | Container, HTTP/router, global + terminable middleware, CORS, TrustHosts/Proxies, cache.headers, cookie encrypt, `/up` + `/health`, JSON 404/exceptions, logging |
 | Database | SQLite, Schema/Blueprint, migrations, query builder, **Eloquex** (fillable/guarded, touch, relations, scopes, factories) |
 | Auth web loop | Session, CSRF, flash, guard, policies/gates, password broker/reset, validation depth, Crypt, signed URLs, DB API tokens |
-| DX | `make:*`, migrate/fresh/wipe/seed, config/view cache+clear, route:list, serve, tinker, `env`/`key:generate`/`about`/`down`/`up`, Str/Arr, Collection, `AGENTS.md` |
+| DX | `make:*`, migrate/fresh/wipe/seed, config/route/view cache, `optimize`, route:list, serve, tinker, `env`/`key:generate`/`about`/`down`/`up`, Str/Arr, Collection, `AGENTS.md` |
 | Services | Cache, queue (sync/database/deferred, ShouldQueue), mail, notifications, logging, filesystem, named rate limiters |
 | HTTP | Static files, multipart uploads, JsonResource + paginator links, OTP `:json` |
 | Views | Blade `{{ }}`, `old()`, `@lang`/`__()`, `@csrf`/`@method`, `@if`/`@else`/`@unless`/`@forelse`, `@include`, `@foreach`, `@error`/`@session`, `@auth`/`@can`, components/stacks |

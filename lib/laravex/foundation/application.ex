@@ -65,22 +65,9 @@ defmodule Laravex.Foundation.Application do
     Laravex.Routing.Router.reset()
     Laravex.Console.Router.reset()
 
-    if app.health do
-      Laravex.Routing.Router.get(app.health, fn _req ->
-        Laravex.Http.Response.new(200, "OK", [{"content-type", "text/plain; charset=utf-8"}])
-      end)
+    unless Laravex.Routing.RouteCache.load!(app.base_path) do
+      register_http_routes(app)
     end
-
-    Laravex.Routing.Router.get("/health", fn _req ->
-      Laravex.Foundation.Health.check()
-    end)
-
-    if app.web_routes && Code.ensure_loaded?(Routes.Web) do
-      Routes.Web.register()
-    end
-
-    maybe_register(Module.concat(["Routes", "Api"]))
-    maybe_register(Module.concat(["Routes", "Auth"]))
 
     if app.console_routes && Code.ensure_loaded?(Routes.Console) do
       Routes.Console.register()
@@ -128,6 +115,26 @@ defmodule Laravex.Foundation.Application do
       e ->
         Laravex.Foundation.Exceptions.render(app.exceptions, request, e)
     end
+  end
+
+  def register_http_routes(%__MODULE__{} = app) do
+    if app.health do
+      Laravex.Routing.Router.get(app.health, fn _req ->
+        Laravex.Http.Response.new(200, "OK", [{"content-type", "text/plain; charset=utf-8"}])
+      end)
+    end
+
+    Laravex.Routing.Router.get("/health", fn _req ->
+      Laravex.Foundation.Health.check()
+    end)
+
+    if app.web_routes && Code.ensure_loaded?(Routes.Web) do
+      Routes.Web.register()
+    end
+
+    maybe_register(Module.concat(["Routes", "Api"]))
+    maybe_register(Module.concat(["Routes", "Auth"]))
+    :ok
   end
 
   defp maybe_register(mod) do

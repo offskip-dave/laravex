@@ -39,6 +39,7 @@ defmodule Laravex.View do
     |> replace_session(assigns)
     |> replace_directives(assigns)
     |> replace_old(assigns)
+    |> replace_json(assigns)
     |> replace_echoes(assigns)
     |> replace_stacks()
   end
@@ -405,12 +406,30 @@ defmodule Laravex.View do
     end)
   end
 
+  defp replace_json(contents, assigns) do
+    Regex.replace(~r/@json\(\s*\$?([a-zA-Z0-9_\.]+)\s*\)/, contents, fn _, key ->
+      key = String.trim_leading(key, "$")
+      value = get_in_assign(assigns, key)
+      value |> Laravex.Support.JSON.encode!() |> json_for_html()
+    end)
+  end
+
   defp replace_echoes(contents, assigns) do
     Regex.replace(~r/\{\{\s*\$?([a-zA-Z0-9_\.]+)\s*\}\}/, contents, fn _, key ->
       key = String.trim_leading(key, "$")
       value = get_in_assign(assigns, key)
       value |> to_string() |> html_escape()
     end)
+  end
+
+  # Make JSON safe to embed in HTML/script tags (Laravel Js::from-lite).
+  defp json_for_html(json) when is_binary(json) do
+    json
+    |> String.replace("<", "\\u003c")
+    |> String.replace(">", "\\u003e")
+    |> String.replace("&", "\\u0026")
+    |> String.replace("\u2028", "\\u2028")
+    |> String.replace("\u2029", "\\u2029")
   end
 
   defp get_in_assign(assigns, key) do

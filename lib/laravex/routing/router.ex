@@ -226,6 +226,8 @@ defmodule Laravex.Routing.Router do
     if path == "/", do: "/", else: String.trim_trailing(path, "/")
   end
 
+  def ensure_tables, do: ensure()
+
   defp ensure do
     if :ets.whereis(@table) == :undefined, do: reset()
     :ok

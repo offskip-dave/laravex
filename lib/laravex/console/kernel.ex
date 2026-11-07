@@ -15,8 +15,12 @@ defmodule Laravex.Console.Kernel do
     "route:list" => {&__MODULE__.cmd_routes/1, "List routes"},
     "config:cache" => {&__MODULE__.cmd_config_cache/1, "Cache configuration"},
     "config:clear" => {&__MODULE__.cmd_config_clear/1, "Clear configuration cache"},
+    "route:cache" => {&__MODULE__.cmd_route_cache/1, "Cache the route collection"},
+    "route:clear" => {&__MODULE__.cmd_route_clear/1, "Remove the route cache file"},
     "view:cache" => {&__MODULE__.cmd_view_cache/1, "Cache views"},
     "view:clear" => {&__MODULE__.cmd_view_clear/1, "Clear compiled views"},
+    "optimize" => {&__MODULE__.cmd_optimize/1, "Cache framework bootstrap files"},
+    "optimize:clear" => {&__MODULE__.cmd_optimize_clear/1, "Remove cached bootstrap files"},
     "queue:work" => {&__MODULE__.cmd_queue_work/1, "Process queue jobs"},
     "schedule:run" => {&__MODULE__.cmd_schedule/1, "Run due scheduled tasks"},
     "tinker" => {&__MODULE__.cmd_tinker/1, "Interact with the application"},
@@ -133,6 +137,33 @@ defmodule Laravex.Console.Kernel do
     IO.puts("Configuration cache cleared.")
   end
 
+  def cmd_route_cache(_) do
+    Laravex.Routing.RouteCache.clear!()
+    Laravex.Routing.Router.reset()
+
+    case Laravex.Foundation.Application.instance() do
+      %{base_path: base} = instance ->
+        app = %Laravex.Foundation.Application{
+          base_path: base,
+          web_routes: Path.join(base, "routes/web.ex"),
+          health: Map.get(instance, :health) || "/up"
+        }
+
+        Laravex.Foundation.Application.register_http_routes(app)
+
+      _ ->
+        Laravex.Foundation.Server.boot!()
+    end
+
+    Laravex.Routing.RouteCache.cache!()
+    IO.puts("Routes cached successfully.")
+  end
+
+  def cmd_route_clear(_) do
+    Laravex.Routing.RouteCache.clear!()
+    IO.puts("Route cache cleared.")
+  end
+
   def cmd_view_cache(_) do
     n = Laravex.View.Cache.warm()
     IO.puts("Blade templates cached (#{n} views).")
@@ -141,6 +172,20 @@ defmodule Laravex.Console.Kernel do
   def cmd_view_clear(_) do
     Laravex.View.Cache.clear()
     IO.puts("Compiled views cleared.")
+  end
+
+  def cmd_optimize(_) do
+    cmd_config_cache([])
+    cmd_route_cache([])
+    cmd_view_cache([])
+    IO.puts("Files cached successfully.")
+  end
+
+  def cmd_optimize_clear(_) do
+    cmd_config_clear([])
+    cmd_route_clear([])
+    cmd_view_clear([])
+    IO.puts("Cached bootstrap files cleared successfully.")
   end
 
   def cmd_queue_work(args) do

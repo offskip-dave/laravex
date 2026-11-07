@@ -14,9 +14,11 @@ defmodule Laravex.Http.Server do
     {:ok, pid, actual_port}
   end
 
-  def handle_raw(data) do
-    case parse_request(data) do
+  def handle_raw(data, opts \\ []) do
+    case parse_request(data, opts) do
       {:ok, request} ->
+        if request.peer, do: Process.put(:laravex_peer, request.peer)
+
         case try_static(request) do
           {:ok, response} -> response
           :miss -> Laravex.Foundation.Application.handle_request(request)
@@ -87,14 +89,23 @@ defmodule Laravex.Http.Server do
   end
 
   defp serve(socket) do
+    peer = peername(socket)
+
     case recv_all(socket) do
       {:ok, data} ->
-        response = handle_raw(data)
+        response = handle_raw(data, peer: peer)
         :gen_tcp.send(socket, Laravex.Http.Response.to_iodata(response))
         :gen_tcp.close(socket)
 
       {:error, _} ->
         :gen_tcp.close(socket)
+    end
+  end
+
+  defp peername(socket) do
+    case :inet.peername(socket) do
+      {:ok, {ip, _port}} -> ip |> :inet.ntoa() |> to_string()
+      _ -> nil
     end
   end
 
@@ -132,7 +143,7 @@ defmodule Laravex.Http.Server do
     end
   end
 
-  defp parse_request(data) do
+  defp parse_request(data, opts) do
     case String.split(data, "\r\n\r\n", parts: 2) do
       [header_block | rest] ->
         body = List.first(rest) || ""
@@ -153,7 +164,7 @@ defmodule Laravex.Http.Server do
                   |> Enum.reject(&is_nil/1)
                   |> Map.new()
 
-                {:ok, Laravex.Http.Request.capture(method, path, headers, body)}
+                {:ok, Laravex.Http.Request.capture(method, path, headers, body, opts)}
 
               _ ->
                 {:error, :bad_request_line}

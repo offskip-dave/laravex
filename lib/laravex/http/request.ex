@@ -16,13 +16,15 @@ defmodule Laravex.Http.Request do
             route_params: %{},
             errors: %{},
             old: %{},
-            flash: %{}
+            flash: %{},
+            peer: nil
 
-  def capture(method, path, headers \\ %{}, body \\ "") do
+  def capture(method, path, headers \\ %{}, body \\ "", opts \\ []) do
     {path, query} = split_path(path)
     headers = normalize_headers(headers)
     cookies = parse_cookies(Map.get(headers, "cookie", ""))
     {params, files} = parse_body(headers, body)
+    peer = Keyword.get(opts, :peer)
 
     %__MODULE__{
       method: String.upcase(to_string(method)),
@@ -33,7 +35,8 @@ defmodule Laravex.Http.Request do
       params: Map.merge(query, params),
       files: files,
       cookies: cookies,
-      expects_json: headers_expect_json?(headers)
+      expects_json: headers_expect_json?(headers),
+      peer: peer
     }
   end
 

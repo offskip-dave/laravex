@@ -58,16 +58,28 @@ defmodule Laravex.Http.Response do
 
   def with_cookie(%__MODULE__{} = resp, name, value, opts \\ []) do
     max_age = Keyword.get(opts, :max_age)
-    path = Keyword.get(opts, :path, "/")
+    path = Keyword.get(opts, :path, Laravex.Config.Repository.get("session.path", "/"))
     http_only = Keyword.get(opts, :http_only, true)
+    domain = Keyword.get(opts, :domain, Laravex.Config.Repository.get("session.domain"))
+    secure = Keyword.get(opts, :secure, truthy?(Laravex.Config.Repository.get("session.secure", false)))
+    same_site = Keyword.get(opts, :same_site, Laravex.Config.Repository.get("session.same_site", "lax"))
 
     cookie =
       "#{name}=#{URI.encode(to_string(value))}; Path=#{path}" <>
         if(http_only, do: "; HttpOnly", else: "") <>
-        if(max_age, do: "; Max-Age=#{max_age}", else: "")
+        if(max_age, do: "; Max-Age=#{max_age}", else: "") <>
+        if(domain not in [nil, "", "null"], do: "; Domain=#{domain}", else: "") <>
+        if(secure, do: "; Secure", else: "") <>
+        if(same_site not in [nil, ""], do: "; SameSite=#{same_site_token(same_site)}", else: "")
 
     %{resp | cookies: resp.cookies ++ [cookie]}
   end
+
+  defp same_site_token(v) when is_atom(v), do: same_site_token(Atom.to_string(v))
+  defp same_site_token(v) when is_binary(v), do: String.capitalize(String.downcase(v))
+  defp same_site_token(_), do: "Lax"
+
+  defp truthy?(v), do: v in [true, "true", 1, "1"]
 
   def to_iodata(%__MODULE__{} = response) do
     reason = reason_phrase(response.status)
