@@ -131,6 +131,25 @@ defmodule Laravex.Http.Request do
     end
   end
 
+  def string(%__MODULE__{} = request, key, default \\ "") do
+    case input(request, key) do
+      nil -> default
+      v -> to_string(v)
+    end
+  end
+
+  @doc "Return the input if it is in `allowed`, otherwise `default` (Laravel `enum`)."
+  def enum(%__MODULE__{} = request, key, allowed, default \\ nil) when is_list(allowed) do
+    value = input(request, key)
+    allowed_s = Enum.map(allowed, &to_string/1)
+
+    cond do
+      is_nil(value) -> default
+      to_string(value) in allowed_s -> value
+      true -> default
+    end
+  end
+
   @doc "Call `fun` with the request when the key is present (Laravel `whenHas`)."
   def when_has(%__MODULE__{} = request, key, fun) when is_function(fun, 1) do
     if has?(request, key), do: fun.(request), else: request

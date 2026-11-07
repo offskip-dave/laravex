@@ -111,7 +111,20 @@ defmodule Laravex.Support.Arr do
   end
 
   def first(list) when is_list(list), do: List.first(list)
+
+  def first(list, fun) when is_list(list) and is_function(fun, 1), do: first(list, fun, nil)
+
+  def first(list, fun, default) when is_list(list) and is_function(fun, 1) do
+    Enum.find(list, default, fun)
+  end
+
   def last(list) when is_list(list), do: List.last(list)
+
+  def last(list, fun) when is_list(list) and is_function(fun, 1), do: last(list, fun, nil)
+
+  def last(list, fun, default) when is_list(list) and is_function(fun, 1) do
+    list |> Enum.reverse() |> Enum.find(default, fun)
+  end
 
   def wrap(nil), do: []
   def wrap(list) when is_list(list), do: list

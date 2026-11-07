@@ -544,6 +544,17 @@ defmodule Laravex.Validation do
           do: [],
           else: ["The #{field} field must only contain letters, numbers, dashes and underscores."]
 
+      "ascii" ->
+        if is_nil(value) or blank?(value) or (is_binary(value) and Regex.match?(~r/^[\x00-\x7F]*$/, value)),
+          do: [],
+          else: ["The #{field} field must contain only ASCII characters."]
+
+      "hex_color" ->
+        if is_nil(value) or blank?(value) or
+             (is_binary(value) and Regex.match?(~r/^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, value)),
+          do: [],
+          else: ["The #{field} field must be a valid hexadecimal color."]
+
       "different:" <> other_field ->
         other = Map.get(data, other_field) || Map.get(data, String.to_atom(other_field))
 

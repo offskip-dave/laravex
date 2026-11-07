@@ -124,6 +124,63 @@ defmodule Laravex.Filesystem.Storage do
     end
   end
 
+  @doc "List immediate subdirectories (Laravel `directories`)."
+  def directories(directory, disk \\ nil) do
+    d = disk(disk)
+    dir = Path.join(d.root, directory)
+
+    case File.ls(dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.filter(fn name -> File.dir?(Path.join(dir, name)) end)
+        |> Enum.map(fn name -> Path.join(directory, name) |> String.trim_leading("/") end)
+
+      _ ->
+        []
+    end
+  end
+
+  @doc "Create a directory (Laravel `makeDirectory`)."
+  def make_directory(directory, disk \\ nil) do
+    d = disk(disk)
+    File.mkdir_p!(Path.join(d.root, directory))
+    :ok
+  end
+
+  @doc "Guess MIME type from path extension (Laravel `mimeType`)."
+  def mime_type(path, disk \\ nil) do
+    _ = disk(disk)
+
+    case Path.extname(path) |> String.downcase() do
+      ".html" -> "text/html"
+      ".htm" -> "text/html"
+      ".css" -> "text/css"
+      ".js" -> "application/javascript"
+      ".json" -> "application/json"
+      ".xml" -> "application/xml"
+      ".txt" -> "text/plain"
+      ".csv" -> "text/csv"
+      ".pdf" -> "application/pdf"
+      ".png" -> "image/png"
+      ".jpg" -> "image/jpeg"
+      ".jpeg" -> "image/jpeg"
+      ".gif" -> "image/gif"
+      ".webp" -> "image/webp"
+      ".svg" -> "image/svg+xml"
+      ".ico" -> "image/x-icon"
+      ".zip" -> "application/zip"
+      ".gz" -> "application/gzip"
+      ".mp3" -> "audio/mpeg"
+      ".mp4" -> "video/mp4"
+      ".wav" -> "audio/wav"
+      ".woff" -> "font/woff"
+      ".woff2" -> "font/woff2"
+      ".ttf" -> "font/ttf"
+      ".otf" -> "font/otf"
+      _ -> "application/octet-stream"
+    end
+  end
+
   @doc "Recursively list files under a directory (Laravel `allFiles`)."
   def all_files(directory, disk \\ nil) do
     d = disk(disk)

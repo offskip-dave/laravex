@@ -334,6 +334,13 @@ defmodule Laravex.Support.Helpers do
     value
   end
 
+  def cookie_expire(name, opts \\ []) do
+    Laravex.Http.CookieJar.expire(name, opts)
+    :ok
+  end
+
+  def cookie_forget(name, opts \\ []), do: cookie_expire(name, opts)
+
   def paginator_links(pager, path \\ "/"), do: Laravex.Http.Paginator.links(pager, path)
 
   def str, do: Laravex.Support.Str

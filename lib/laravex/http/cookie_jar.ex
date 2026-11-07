@@ -16,7 +16,8 @@ defmodule Laravex.Http.CookieJar do
 
   def queued, do: Process.get(@key, [])
 
-  def forget(name) do
+  @doc "Remove a cookie from the queue without emitting a Set-Cookie (Laravel `unqueue`)."
+  def unqueue(name) do
     Process.put(
       @key,
       Enum.reject(queued(), fn {n, _, _} -> n == to_string(name) end)
@@ -24,6 +25,15 @@ defmodule Laravex.Http.CookieJar do
 
     :ok
   end
+
+  @doc "Queue a deletion cookie (Max-Age=0)."
+  def expire(name, opts \\ []) do
+    _ = unqueue(name)
+    queue(name, "", Keyword.merge(opts, max_age: 0))
+  end
+
+  @doc "Expire a cookie (Laravel `Cookie::forget`)."
+  def forget(name, opts \\ []), do: expire(name, opts)
 
   def clear do
     Process.delete(@key)
