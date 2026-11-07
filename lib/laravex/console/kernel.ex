@@ -583,7 +583,12 @@ defmodule Laravex.Console.Kernel do
   defp notification_stub(name), do: """
   defmodule App.Notifications.#{name} do
     def via(_), do: [:mail, :log]
+
     def to_mail(user), do: %{to: user.email, subject: "#{name}", body: "Hi"}
+
+    def to_array(user) do
+      %{"message" => "#{name}", "email" => Map.get(user, :email)}
+    end
   end
   """
 

@@ -1,5 +1,5 @@
 defmodule Laravex.Notifications.Notifier do
-  @moduledoc "Send notifications via mail/database/log channels."
+  @moduledoc "Send notifications via mail/database/log/broadcast channels."
 
   @table :laravex_notifications_sent
 
@@ -32,7 +32,7 @@ defmodule Laravex.Notifications.Notifier do
       end
 
     Enum.each(List.wrap(channels), fn channel ->
-      deliver(channel, notifiable, notification_mod, payload)
+      deliver(normalize_channel(channel), notifiable, notification_mod, payload)
     end)
 
     if Application.get_env(:laravex, :notification_fake, false) do
@@ -59,6 +59,9 @@ defmodule Laravex.Notifications.Notifier do
   defp unwrap({mod, payload}) when is_atom(mod), do: {mod, payload}
   defp unwrap(mod) when is_atom(mod), do: {mod, nil}
 
+  defp normalize_channel(channel) when is_atom(channel), do: channel
+  defp normalize_channel(channel) when is_binary(channel), do: String.to_atom(channel)
+
   defp deliver(:mail, notifiable, mod, payload) do
     mail =
       cond do
@@ -83,11 +86,63 @@ defmodule Laravex.Notifications.Notifier do
     Laravex.Log.Logger.info("Notification", %{
       to: route_mail(notifiable),
       notification: mod,
-      payload: payload
+      payload: notification_array(notifiable, mod, payload)
     })
   end
 
-  defp deliver(_, _, _, _), do: :ok
+  defp deliver(:broadcast, notifiable, mod, payload) do
+    data = notification_array(notifiable, mod, payload)
+    channel = broadcast_channel(notifiable, mod)
+    event = broadcast_event(mod)
+    Laravex.Broadcasting.Broadcaster.event(channel, event, data)
+  end
+
+  defp deliver(channel, _notifiable, mod, _payload) do
+    raise ArgumentError,
+          "Notification #{inspect(mod)} uses unsupported channel #{inspect(channel)}. " <>
+            "Supported channels: :mail, :database, :log, :broadcast."
+  end
+
+  defp notification_array(notifiable, mod, payload) do
+    cond do
+      function_exported?(mod, :to_array, 2) and not is_nil(payload) ->
+        mod.to_array(notifiable, payload)
+
+      function_exported?(mod, :to_array, 1) ->
+        mod.to_array(notifiable)
+
+      function_exported?(mod, :to_database, 2) and not is_nil(payload) ->
+        mod.to_database(notifiable, payload)
+
+      function_exported?(mod, :to_database, 1) ->
+        mod.to_database(notifiable)
+
+      true ->
+        %{
+          "notification" => to_string(mod),
+          "payload" => payload
+        }
+    end
+  end
+
+  defp broadcast_channel(notifiable, mod) do
+    cond do
+      function_exported?(mod, :broadcast_on, 1) ->
+        List.wrap(mod.broadcast_on(notifiable)) |> List.first() || "notifications"
+
+      function_exported?(mod, :broadcast_on, 0) ->
+        List.wrap(mod.broadcast_on()) |> List.first() || "notifications"
+
+      true ->
+        "App.Models.User.#{Map.get(notifiable, :id)}"
+    end
+  end
+
+  defp broadcast_event(mod) do
+    if function_exported?(mod, :broadcast_as, 0),
+      do: mod.broadcast_as(),
+      else: mod |> Module.split() |> List.last()
+  end
 
   defp route_mail(notifiable) do
     mod = notifiable.__struct__
@@ -107,15 +162,17 @@ defmodule Laravex.Notifications.Notifier do
   end
 
   defp store_database(notifiable, notification, payload) do
+    data = notification_array(notifiable, notification, payload)
     dir = Path.join(Laravex.Foundation.Application.base_path(), "storage/app/notifications")
     File.mkdir_p!(dir)
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
 
     entry = %{
       "notifiable_id" => Map.get(notifiable, :id),
       "notifiable_type" => to_string(notifiable.__struct__),
       "notification" => to_string(notification),
-      "data" => inspect(payload),
-      "created_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      "data" => data,
+      "created_at" => now
     }
 
     File.write!(
@@ -129,9 +186,9 @@ defmodule Laravex.Notifications.Notifier do
         "type" => to_string(notification),
         "notifiable_type" => to_string(notifiable.__struct__),
         "notifiable_id" => Map.get(notifiable, :id),
-        "data" => Laravex.Support.JSON.encode!(%{"payload" => inspect(payload)}),
-        "created_at" => entry["created_at"],
-        "updated_at" => entry["created_at"]
+        "data" => Laravex.Support.JSON.encode!(data),
+        "created_at" => now,
+        "updated_at" => now
       })
     end
   rescue

@@ -5,6 +5,8 @@ defmodule Laravex.Broadcasting.Broadcaster do
 
   use GenServer
 
+  @supported_drivers ~w(log null array)
+
   def start_link(_ \\ []), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
 
   @impl true
@@ -22,7 +24,7 @@ defmodule Laravex.Broadcasting.Broadcaster do
 
   @impl true
   def handle_call({:event, channel, event, payload}, _from, state) do
-    driver = Laravex.Config.Repository.get("broadcasting.default", "log")
+    driver = ensure_driver!()
 
     message = %{
       channel: to_string(channel),
@@ -38,8 +40,8 @@ defmodule Laravex.Broadcasting.Broadcaster do
       "log" ->
         Laravex.Log.Logger.info("Broadcast", message)
 
-      _ ->
-        Laravex.Log.Logger.info("Broadcast via #{driver}", message)
+      "array" ->
+        :ok
     end
 
     {:reply, :ok, %{state | events: [message | state.events]}}
@@ -47,6 +49,19 @@ defmodule Laravex.Broadcasting.Broadcaster do
 
   def handle_call(:sent, _from, state), do: {:reply, Enum.reverse(state.events), state}
   def handle_call(:clear, _from, _state), do: {:reply, :ok, %{events: []}}
+
+  defp ensure_driver! do
+    driver = to_string(Laravex.Config.Repository.get("broadcasting.default", "log"))
+
+    unless driver in @supported_drivers do
+      raise ArgumentError,
+            "Broadcasting uses unsupported driver #{inspect(driver)}. " <>
+              "Supported drivers: #{Enum.join(@supported_drivers, ", ")} " <>
+              "(set BROADCAST_CONNECTION=log|null|array; reverb/pusher/ably are out of scope)."
+    end
+
+    driver
+  end
 end
 
 defmodule Laravex.Broadcasting.ShouldBroadcast do

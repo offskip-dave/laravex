@@ -244,19 +244,17 @@ defmodule Laravex.Http.Middleware.ShareErrors do
 end
 
 defmodule Laravex.Http.Middleware.ShareFlash do
-  @moduledoc "Ages `_flash.*` session keys onto `request.flash` for one request."
+  @moduledoc """
+  Ages flash bag onto `request.flash` for one request (Laravel ShareErrorsFromSession flash).
+
+  Moves `_flash.new` → `_flash.old` (consumed), clears `_flash.new`, merges `flash.now`.
+  """
 
   def handle(request, _opts) do
-    {flash, session} =
-      Enum.reduce(request.session, {%{}, %{}}, fn {k, v}, {flash, session} ->
-        key = to_string(k)
-
-        if String.starts_with?(key, "_flash.") do
-          {Map.put(flash, String.trim_leading(key, "_flash."), v), session}
-        else
-          {flash, Map.put(session, key, v)}
-        end
-      end)
+    session = Laravex.Session.Store.age_flash(request.session)
+    bag = Laravex.Session.Store.flash_bag(session)
+    now = Process.get(:laravex_flash_now, %{})
+    flash = Map.merge(bag["old"] || %{}, now)
 
     {:ok, %{request | flash: flash, session: session}}
   end

@@ -38,7 +38,7 @@ mix test
 | DX | `make:*`, migrate/fresh/wipe/seed, config/route/event/view cache, `optimize`, `db:show`/`model:show`, queue failed tools, schedule/event list, serve, tinker, Str/Arr, Collection, `AGENTS.md` |
 | Services | Cache, queue (sync/database/deferred, ShouldQueue, failed retry), Bus chain, mail (log/array), notifications, logging, filesystem, named rate limiters |
 | HTTP | Static files, multipart uploads, JsonResource + paginator links, OTP `:json`, `Http.Client` outbound |
-| Views | Blade `{{ }}`, `old()`, `@lang`/`__()`, `@csrf`/`@method`, `@if`/`@else`/`@unless`/`@forelse`, `@include`, `@foreach`, `@error`/`@session`, `@auth`/`@can`, components/stacks |
+| Views | Blade `{{ }}`, `old()`, `@lang`/`__()`, `@csrf`/`@method`/`@selected`/`@checked`, `@if`/`@else`/`@unless`/`@forelse`, `@include`, `@foreach`, `@error`/`@session`, `@auth`/`@can`, `@json`, components/stacks |
 | Async | Events/listeners, notifications, schedule (cron/`hourly`/`daily`), broadcasting bus |
 | Ecosystem | `install:api` (tokens), `install:broadcasting`, `install:starter-kit`, observability recorder |
 

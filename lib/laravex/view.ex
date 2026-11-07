@@ -30,6 +30,7 @@ defmodule Laravex.View do
     |> replace_vite()
     |> replace_csrf(assigns)
     |> replace_method()
+    |> replace_selected_checked(assigns)
     |> replace_lang()
     |> replace_push()
     |> replace_auth_directives(assigns)
@@ -200,6 +201,50 @@ defmodule Laravex.View do
       ~s(<input type="hidden" name="_method" value="#{String.upcase(method)}">)
     end)
   end
+
+  defp replace_selected_checked(contents, assigns) do
+    contents
+    |> then(fn html ->
+      Regex.replace(~r/@selected\(\s*(.+?)\s*\)/, html, fn _, expr ->
+        if truthy?(eval_form_compare(expr, assigns)), do: "selected", else: ""
+      end)
+    end)
+    |> then(fn html ->
+      Regex.replace(~r/@checked\(\s*(.+?)\s*\)/, html, fn _, expr ->
+        if truthy?(eval_form_compare(expr, assigns)), do: "checked", else: ""
+      end)
+    end)
+  end
+
+  # Supports `old('field') == 'value'` and bare assign truthiness.
+  defp eval_form_compare(expr, assigns) do
+    expr = String.trim(expr)
+
+    cond do
+      String.contains?(expr, "==") ->
+        [left, right] = String.split(expr, "==", parts: 2)
+        left_v = eval_form_side(String.trim(left), assigns)
+        right_v = eval_form_side(String.trim(right), assigns)
+        to_string(left_v) == to_string(right_v)
+
+      true ->
+        eval_expr(expr, assigns)
+    end
+  end
+
+  defp eval_form_side("old('" <> rest, _assigns) do
+    key = rest |> String.trim_trailing("')") |> String.trim_trailing("\")")
+    Laravex.Support.Helpers.old(key, "")
+  end
+
+  defp eval_form_side("old(\"" <> rest, _assigns) do
+    key = String.trim_trailing(rest, "\")")
+    Laravex.Support.Helpers.old(key, "")
+  end
+
+  defp eval_form_side("'" <> rest, _assigns), do: String.trim_trailing(rest, "'")
+  defp eval_form_side("\"" <> rest, _assigns), do: String.trim_trailing(rest, "\"")
+  defp eval_form_side(expr, assigns), do: eval_expr(expr, assigns)
 
   defp replace_lang(contents) do
     contents

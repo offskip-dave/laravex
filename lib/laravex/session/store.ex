@@ -40,8 +40,49 @@ defmodule Laravex.Session.Store do
     %{request | session: Map.put(session, to_string(key), value)}
   end
 
+  @doc "Flash data for the *next* request (Laravel session()->flash)."
   def flash(request, key, value) do
-    put(request, "_flash." <> to_string(key), value)
+    bag = flash_bag(request.session)
+    new = Map.put(bag["new"] || %{}, to_string(key), value)
+    put(request, "_flash", %{"old" => bag["old"] || %{}, "new" => new})
+  end
+
+  @doc "Flash data for the *current* request only (Laravel session()->now)."
+  def flash_now(request, key, value) do
+    now = Process.get(:laravex_flash_now, %{})
+    Process.put(:laravex_flash_now, Map.put(now, to_string(key), value))
+    flash = Map.merge(request.flash || %{}, %{to_string(key) => value})
+    %{request | flash: flash}
+  end
+
+  def flash_bag(session) when is_map(session) do
+    case Map.get(session, "_flash") do
+      %{"old" => _, "new" => _} = bag ->
+        bag
+
+      bag when is_map(bag) ->
+        %{"old" => %{}, "new" => stringify_map(bag)}
+
+      _ ->
+        # Legacy `_flash.key` entries
+        legacy =
+          session
+          |> Enum.filter(fn {k, _} -> String.starts_with?(to_string(k), "_flash.") end)
+          |> Map.new(fn {k, v} -> {String.trim_leading(to_string(k), "_flash."), v} end)
+
+        %{"old" => %{}, "new" => legacy}
+    end
+  end
+
+  def age_flash(session) when is_map(session) do
+    bag = flash_bag(session)
+    # Consume: previous new becomes old; clear new for this request's outgoing flashes.
+    aged = %{"old" => bag["new"] || %{}, "new" => %{}}
+
+    session
+    |> Enum.reject(fn {k, _} -> String.starts_with?(to_string(k), "_flash.") end)
+    |> Map.new()
+    |> Map.put("_flash", aged)
   end
 
   def regenerate(%{session_id: old, session: session} = request) do
@@ -53,11 +94,12 @@ defmodule Laravex.Session.Store do
 
   def save(sid, session) when is_binary(sid) do
     ensure()
+    driver = ensure_driver!()
     :ets.insert(@table, {sid, session})
 
-    case driver() do
+    case driver do
       "database" -> persist_db(sid, session)
-      _ -> persist_file(sid, session)
+      "file" -> persist_file(sid, session)
     end
 
     :ok
@@ -65,11 +107,12 @@ defmodule Laravex.Session.Store do
 
   def delete(sid) when is_binary(sid) do
     ensure()
+    driver = ensure_driver!()
     :ets.delete(@table, sid)
 
-    case driver() do
+    case driver do
       "database" -> delete_db(sid)
-      _ -> delete_file(sid)
+      "file" -> delete_file(sid)
     end
 
     :ok
@@ -77,6 +120,7 @@ defmodule Laravex.Session.Store do
 
   def load(sid) do
     ensure()
+    ensure_driver!()
 
     case :ets.lookup(@table, sid) do
       [{^sid, session}] ->
@@ -96,8 +140,25 @@ defmodule Laravex.Session.Store do
 
   def cookie_name, do: Laravex.Config.Repository.get("session.cookie", "laravex-session")
 
-  defp driver do
-    to_string(Laravex.Config.Repository.get("session.driver", "file"))
+  @supported_drivers ~w(file database)
+
+  defp ensure_driver! do
+    driver = to_string(Laravex.Config.Repository.get("session.driver", "file"))
+
+    unless driver in @supported_drivers do
+      raise ArgumentError,
+            "Session uses unsupported driver #{inspect(driver)}. " <>
+              "Supported drivers: #{Enum.join(@supported_drivers, ", ")} " <>
+              "(set SESSION_DRIVER=file|database)."
+    end
+
+    driver
+  end
+
+  defp driver, do: ensure_driver!()
+
+  defp stringify_map(map) do
+    Map.new(map, fn {k, v} -> {to_string(k), v} end)
   end
 
   defp lifetime_seconds do
@@ -111,7 +172,7 @@ defmodule Laravex.Session.Store do
   defp read_persistent(sid) do
     case driver() do
       "database" -> read_db(sid)
-      _ -> read_file(sid)
+      "file" -> read_file(sid)
     end
   end
 
@@ -235,7 +296,7 @@ defmodule Laravex.Session.Store do
           ])
         end
 
-      _ ->
+      "file" ->
         dir = session_files_dir()
 
         if File.dir?(dir) do

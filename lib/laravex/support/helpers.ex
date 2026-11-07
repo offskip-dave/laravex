@@ -70,14 +70,41 @@ defmodule Laravex.Support.Helpers do
 
   def session_get(key, default \\ nil) do
     case Process.get(:laravex_request) do
-      %{flash: flash} when is_map(flash) ->
-        Map.get(flash, to_string(key)) || Map.get(flash, key, default)
+      %{flash: flash, session: session} when is_map(flash) ->
+        Map.get(flash, to_string(key)) ||
+          Map.get(flash, key) ||
+          Map.get(session || %{}, to_string(key), default)
 
       %{session: session} when is_map(session) ->
         Map.get(session, to_string(key), default)
 
       _ ->
         default
+    end
+  end
+
+  def flash(key, value) do
+    case Process.get(:laravex_request) do
+      nil ->
+        value
+
+      request ->
+        request = Laravex.Session.Store.flash(request, key, value)
+        Process.put(:laravex_request, request)
+        value
+    end
+  end
+
+  def flash_now(key, value) do
+    case Process.get(:laravex_request) do
+      nil ->
+        Process.put(:laravex_flash_now, Map.put(Process.get(:laravex_flash_now, %{}), to_string(key), value))
+        value
+
+      request ->
+        request = Laravex.Session.Store.flash_now(request, key, value)
+        Process.put(:laravex_request, request)
+        value
     end
   end
 

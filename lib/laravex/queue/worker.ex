@@ -12,10 +12,16 @@ defmodule Laravex.Queue.Worker do
     {:ok, s}
   end
 
+  @supported_connections ~w(sync database deferred)
+
   def push(job_mod, args \\ [], opts \\ []) when is_atom(job_mod) do
     connection =
-      Keyword.get(opts, :connection) ||
-        Laravex.Config.Repository.get("queue.default", "database")
+      to_string(
+        Keyword.get(opts, :connection) ||
+          Laravex.Config.Repository.get("queue.default", "database")
+      )
+
+    ensure_connection!(connection)
 
     should_queue? =
       cond do
@@ -31,9 +37,20 @@ defmodule Laravex.Queue.Worker do
       connection == "deferred" ->
         push_deferred(job_mod, args, opts)
 
-      true ->
+      connection == "database" ->
         push_database(job_mod, args, opts)
     end
+  end
+
+  defp ensure_connection!(connection) do
+    unless connection in @supported_connections do
+      raise ArgumentError,
+            "Queue connection #{inspect(connection)} is unsupported. " <>
+              "Supported connections: #{Enum.join(@supported_connections, ", ")} " <>
+              "(set QUEUE_CONNECTION=sync|database|deferred)."
+    end
+
+    :ok
   end
 
   def dispatch_sync(job_mod, args \\ []) do
