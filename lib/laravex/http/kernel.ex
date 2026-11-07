@@ -14,6 +14,9 @@ defmodule Laravex.Http.Kernel do
             response
 
           {:ok, request} ->
+            request =
+              Laravex.Session.Store.put(request, "_previous.url", request.path)
+
             Process.put(:laravex_request, request)
 
             case Laravex.Routing.Router.invoke(handler, request, opts) do

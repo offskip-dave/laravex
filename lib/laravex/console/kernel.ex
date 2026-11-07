@@ -8,8 +8,10 @@ defmodule Laravex.Console.Kernel do
     "migrate" => {&__MODULE__.cmd_migrate/1, "Run migrations"},
     "migrate:rollback" => {&__MODULE__.cmd_rollback/1, "Rollback migrations"},
     "migrate:refresh" => {&__MODULE__.cmd_refresh/1, "Refresh migrations"},
+    "migrate:fresh" => {&__MODULE__.cmd_fresh/1, "Drop all tables and re-run migrations"},
     "migrate:status" => {&__MODULE__.cmd_status/1, "Show migration status"},
     "db:seed" => {&__MODULE__.cmd_seed/1, "Seed the database"},
+    "db:wipe" => {&__MODULE__.cmd_wipe/1, "Drop all tables"},
     "route:list" => {&__MODULE__.cmd_routes/1, "List routes"},
     "config:cache" => {&__MODULE__.cmd_config_cache/1, "Cache configuration"},
     "view:cache" => {&__MODULE__.cmd_view_cache/1, "Cache views"},
@@ -97,6 +99,8 @@ defmodule Laravex.Console.Kernel do
   def cmd_migrate(_), do: (Laravex.Database.Migrator.migrate(); :ok)
   def cmd_rollback(_), do: (Laravex.Database.Migrator.rollback(); :ok)
   def cmd_refresh(_), do: (Laravex.Database.Migrator.refresh(); :ok)
+  def cmd_fresh(_), do: (Laravex.Database.Migrator.fresh(); IO.puts("Dropped all tables and re-ran migrations."); :ok)
+  def cmd_wipe(_), do: (Laravex.Database.Migrator.wipe(); IO.puts("Dropped all tables."); :ok)
 
   def cmd_status(_) do
     Laravex.Database.Migrator.status()

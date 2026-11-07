@@ -15,7 +15,8 @@ defmodule Laravex.Http.Request do
             expects_json: false,
             route_params: %{},
             errors: %{},
-            old: %{}
+            old: %{},
+            flash: %{}
 
   def capture(method, path, headers \\ %{}, body \\ "") do
     {path, query} = split_path(path)

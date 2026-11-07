@@ -130,7 +130,7 @@ defmodule Laravex.Auth.Gate do
 end
 
 defmodule Laravex.Auth.Token do
-  @moduledoc "Simple API token store (Sanctum-like subset)."
+  @moduledoc "API token store (Sanctum-like) — SQLite `personal_access_tokens` with ETS cache."
 
   @table :laravex_api_tokens
 
@@ -143,28 +143,86 @@ defmodule Laravex.Auth.Token do
       end
     end
 
+    ensure_table()
     :ok
   end
 
   def create(user, name \\ "default") do
     ensure()
     plain = Laravex.Support.Helpers.str_random(40)
-    hash = :crypto.hash(:sha256, plain) |> Base.encode16(case: :lower)
+    hash = hash_token(plain)
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
     :ets.insert(@table, {hash, %{user_id: user.id, name: name}})
+
+    if table_ready?() do
+      Laravex.Database.Query.insert("personal_access_tokens", %{
+        "tokenable_type" => "App.Models.User",
+        "tokenable_id" => user.id,
+        "name" => name,
+        "token" => hash,
+        "abilities" => "*",
+        "created_at" => now,
+        "updated_at" => now
+      })
+    end
+
     %{"plainTextToken" => plain, "accessToken" => hash}
   end
 
   def find_user(plain_token) when is_binary(plain_token) do
     ensure()
-    hash = :crypto.hash(:sha256, plain_token) |> Base.encode16(case: :lower)
+    hash = hash_token(plain_token)
+    model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
 
     case :ets.lookup(@table, hash) do
       [{_, %{user_id: id}}] ->
-        model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
         model.find(id)
 
-      _ ->
-        nil
+      [] ->
+        if table_ready?() do
+          case Laravex.Database.Query.table("personal_access_tokens")
+               |> Laravex.Database.Query.where("token", hash)
+               |> Laravex.Database.Query.first() do
+            %{"tokenable_id" => id} ->
+              :ets.insert(@table, {hash, %{user_id: id, name: "db"}})
+              model.find(id)
+
+            _ ->
+              nil
+          end
+        else
+          nil
+        end
     end
+  end
+
+  defp hash_token(plain), do: :crypto.hash(:sha256, plain) |> Base.encode16(case: :lower)
+
+  defp ensure_table do
+    unless table_ready?() do
+      Laravex.Database.Connection.execute("""
+      CREATE TABLE IF NOT EXISTS personal_access_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tokenable_type TEXT NOT NULL,
+        tokenable_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        token TEXT NOT NULL UNIQUE,
+        abilities TEXT,
+        last_used_at TEXT,
+        expires_at TEXT,
+        created_at TEXT,
+        updated_at TEXT
+      )
+      """)
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp table_ready? do
+    Laravex.Database.Schema.has_table?("personal_access_tokens")
+  rescue
+    _ -> false
   end
 end

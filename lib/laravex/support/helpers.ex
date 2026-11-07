@@ -27,6 +27,60 @@ defmodule Laravex.Support.Helpers do
     Laravex.Http.Response.redirect(to)
   end
 
+  def redirect_with(to, flash) when is_binary(to) and is_map(flash) do
+    case Process.get(:laravex_request) do
+      nil ->
+        redirect(to)
+
+      request ->
+        request =
+          Enum.reduce(flash, request, fn {k, v}, req ->
+            Laravex.Session.Store.flash(req, k, v)
+          end)
+
+        Process.put(:laravex_request, request)
+        redirect(to)
+    end
+  end
+
+  def back(fallback \\ "/") do
+    case Process.get(:laravex_request) do
+      nil ->
+        redirect(fallback)
+
+      request ->
+        to =
+          Laravex.Http.Request.header(request, "referer") ||
+            Map.get(request.session || %{}, "_previous.url") ||
+            fallback
+
+        redirect(to)
+    end
+  end
+
+  def old(key, default \\ "") do
+    case Process.get(:laravex_request) do
+      %{old: old} when is_map(old) ->
+        Map.get(old, to_string(key)) || Map.get(old, key, default)
+
+      _ ->
+        default
+    end
+  end
+
+  def session_get(key, default \\ nil) do
+    case Process.get(:laravex_request) do
+      %{flash: flash} when is_map(flash) ->
+        Map.get(flash, to_string(key)) || Map.get(flash, key, default)
+
+      %{session: session} when is_map(session) ->
+        Map.get(session, to_string(key), default)
+
+      _ ->
+        default
+    end
+  end
+
   def view(name, assigns \\ %{}), do: Laravex.View.make(name, assigns)
 
   def route(name, params \\ %{}) do

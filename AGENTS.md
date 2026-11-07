@@ -28,6 +28,8 @@ Do not commit those into the default tree unless the install step is intentional
 mix compile
 ./artisan list
 ./artisan migrate
+./artisan migrate:fresh
+./artisan db:wipe
 ./artisan db:seed
 ./artisan serve
 ./artisan make:model Post -m

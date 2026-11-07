@@ -6,6 +6,13 @@ defmodule Laravex.Validation do
     def message(%{errors: errors}), do: "The given data was invalid. " <> inspect(errors)
   end
 
+  defmodule Failed do
+    @moduledoc "Raised to redirect back with errors (web) or return 422 (JSON)."
+    defexception [:errors, :request]
+
+    def message(_), do: "The given data was invalid."
+  end
+
   def validate(data, rules) when is_map(data) and is_map(rules) do
     errors =
       Enum.reduce(rules, %{}, fn {field, rule_str}, acc ->
@@ -35,8 +42,8 @@ defmodule Laravex.Validation do
   end
 
   @doc """
-  Validate request params. On failure, flashes `_errors` and `_old` into the session
-  (picked up by ShareErrors / `@error` on the next render).
+  Validate request params. On failure, flashes `_errors` and `_old`.
+  For non-JSON requests, raises `Failed` so the kernel can redirect back.
   """
   def validate_request(request, rules) do
     data = Map.merge(request.params, request.files || %{})
@@ -46,15 +53,22 @@ defmodule Laravex.Validation do
         {:ok, validated, request}
 
       {:error, errors} ->
-        request =
-          request
-          |> Laravex.Session.Store.put("_errors", errors)
-          |> Laravex.Session.Store.put("_old", request.params)
-          |> then(fn r -> %{r | errors: errors, old: request.params} end)
-
+        request = flash_errors(request, errors)
         Process.put(:laravex_request, request)
-        {:error, errors, request}
+
+        if Laravex.Http.Request.expects_json?(request) do
+          {:error, errors, request}
+        else
+          raise Failed, errors: errors, request: request
+        end
     end
+  end
+
+  def flash_errors(request, errors) do
+    request
+    |> Laravex.Session.Store.put("_errors", errors)
+    |> Laravex.Session.Store.put("_old", request.params)
+    |> then(fn r -> %{r | errors: errors, old: request.params} end)
   end
 
   defp check(field, value, rules, data) do
@@ -72,8 +86,13 @@ defmodule Laravex.Validation do
             else: ["The #{field} field must be a valid email."]
 
         "confirmed" ->
-          other = Map.get(data, field <> "_confirmation") || Map.get(data, String.to_atom(field <> "_confirmation"))
-          if to_string(value || "") == to_string(other || ""), do: [], else: ["The #{field} confirmation does not match."]
+          other =
+            Map.get(data, field <> "_confirmation") ||
+              Map.get(data, String.to_atom(field <> "_confirmation"))
+
+          if to_string(value || "") == to_string(other || ""),
+            do: [],
+            else: ["The #{field} confirmation does not match."]
 
         "min:" <> n ->
           min = String.to_integer(n)
@@ -135,10 +154,113 @@ defmodule Laravex.Validation do
               ["The #{field} field must be an image."]
           end
 
-        _ ->
-          []
+        "in:" <> list ->
+          allowed = String.split(list, ",")
+
+          if is_nil(value) or to_string(value) in allowed,
+            do: [],
+            else: ["The selected #{field} is invalid."]
+
+        "regex:" <> pattern ->
+          {:ok, re} = Regex.compile(pattern)
+
+          if is_nil(value) or (is_binary(value) and Regex.match?(re, value)),
+            do: [],
+            else: ["The #{field} format is invalid."]
+
+        "unique:" <> rest ->
+          unique_error(field, value, rest)
+
+        "exists:" <> rest ->
+          exists_error(field, value, rest)
+
+        "array" ->
+          if is_nil(value) or is_list(value) or is_map(value),
+            do: [],
+            else: ["The #{field} field must be an array."]
+
+        other ->
+          custom_rule(field, value, other)
       end
     end)
+  end
+
+  defp unique_error(_field, nil, _), do: []
+  defp unique_error(_field, "", _), do: []
+
+  defp unique_error(field, value, rest) do
+    {table, column, ignore_id} = parse_table_column(rest, field)
+
+    q =
+      Laravex.Database.Query.table(table)
+      |> Laravex.Database.Query.where(column, value)
+
+    q =
+      if ignore_id do
+        Laravex.Database.Query.where(q, "id", "!=", ignore_id)
+      else
+        q
+      end
+
+    if Laravex.Database.Query.exists?(q) do
+      ["The #{field} has already been taken."]
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp exists_error(_field, nil, _), do: []
+  defp exists_error(_field, "", _), do: []
+
+  defp exists_error(field, value, rest) do
+    {table, column, _} = parse_table_column(rest, field)
+
+    exists? =
+      Laravex.Database.Query.table(table)
+      |> Laravex.Database.Query.where(column, value)
+      |> Laravex.Database.Query.exists?()
+
+    if exists?, do: [], else: ["The selected #{field} is invalid."]
+  rescue
+    _ -> ["The selected #{field} is invalid."]
+  end
+
+  defp parse_table_column(rest, field) do
+    parts = String.split(rest, ",")
+
+    table = Enum.at(parts, 0) || field
+    column = Enum.at(parts, 1) || field
+    ignore = Enum.at(parts, 2)
+    {table, column, ignore}
+  end
+
+  defp custom_rule(field, value, rule_name) do
+    mod_name = "App.Rules." <> Macro.camelize(rule_name)
+
+    mod =
+      try do
+        String.to_existing_atom("Elixir." <> mod_name)
+      rescue
+        ArgumentError -> Module.concat([mod_name])
+      end
+
+    case Code.ensure_loaded(mod) do
+      {:module, ^mod} ->
+        cond do
+          function_exported?(mod, :passes?, 2) ->
+            if mod.passes?(field, value),
+              do: [],
+              else: [if(function_exported?(mod, :message, 0), do: mod.message(), else: "validation failed")]
+
+          true ->
+            []
+        end
+
+      _ ->
+        []
+    end
   end
 
   defp blank?(nil), do: true
@@ -162,10 +284,7 @@ defmodule Laravex.Http.FormRequest do
         unless authorize(request),
           do: raise(Laravex.Http.HttpException, status: 403, message: "Forbidden")
 
-        case Laravex.Validation.validate_request(request, rules()) do
-          {:ok, _data, request} -> {:ok, request}
-          {:error, errors, request} -> {:error, errors, request}
-        end
+        Laravex.Validation.validate_request(request, rules())
       end
 
       defoverridable authorize: 1

@@ -20,14 +20,18 @@ defmodule Laravex.View do
 
     contents
     |> apply_extends(assigns)
+    |> replace_includes(assigns)
     |> replace_components(assigns)
     |> replace_vite()
     |> replace_csrf(assigns)
+    |> replace_method()
     |> replace_push()
     |> replace_auth_directives(assigns)
     |> replace_foreach(assigns)
     |> replace_error(assigns)
+    |> replace_session(assigns)
     |> replace_directives(assigns)
+    |> replace_old(assigns)
     |> replace_echoes(assigns)
     |> replace_stacks()
   end
@@ -35,10 +39,20 @@ defmodule Laravex.View do
   defp merge_shared(assigns) do
     shared =
       case Process.get(:laravex_request) do
+        %{errors: errors, old: old, flash: flash, session: session} ->
+          %{
+            "errors" => errors || %{},
+            "old" => old || %{},
+            "flash" => flash || %{},
+            "_token" => Map.get(session || %{}, "_token"),
+            "csrf_token" => Map.get(session || %{}, "_token")
+          }
+
         %{errors: errors, old: old, session: session} ->
           %{
             "errors" => errors || %{},
             "old" => old || %{},
+            "flash" => %{},
             "_token" => Map.get(session || %{}, "_token"),
             "csrf_token" => Map.get(session || %{}, "_token")
           }
@@ -173,6 +187,50 @@ defmodule Laravex.View do
     |> String.replace("{{ csrf_token() }}", token)
   end
 
+  defp replace_method(contents) do
+    Regex.replace(~r/@method\(['"]([^'"]+)['"]\)/, contents, fn _, method ->
+      ~s(<input type="hidden" name="_method" value="#{String.upcase(method)}">)
+    end)
+  end
+
+  defp replace_includes(contents, assigns) do
+    Regex.replace(~r/@include\(['"]([^'"]+)['"](?:,\s*(\[.*?\]))?\)/, contents, fn _, name, attrs_src ->
+      base = Laravex.Foundation.Application.base_path()
+      path = find_view(base, name)
+
+      if path do
+        File.read!(path)
+        |> render_string(Map.merge(assigns, parse_attrs(attrs_src)))
+      else
+        "<!-- missing include #{name} -->"
+      end
+    end)
+  end
+
+  defp replace_old(contents, assigns) do
+    old = Map.get(assigns, "old") || %{}
+
+    Regex.replace(
+      ~r/\{\{\s*old\(['"]([^'"]+)['"](?:,\s*['"]([^'"]*)['"])?\)\s*\}\}/,
+      contents,
+      fn _, key, default ->
+        value = Map.get(old, key) || Map.get(old, String.to_atom(key)) || default || ""
+        value |> to_string() |> html_escape()
+      end
+    )
+  end
+
+  defp replace_session(contents, assigns) do
+    flash = Map.get(assigns, "flash") || %{}
+
+    Regex.replace(~r/@session\(['"]([^'"]+)['"]\)(.*?)@endsession/s, contents, fn _, key, body ->
+      case Map.get(flash, key) || Map.get(flash, String.to_atom(key)) do
+        nil -> ""
+        value -> replace_echoes(body, Map.put(assigns, "value", value))
+      end
+    end)
+  end
+
   defp replace_push(contents) do
     Regex.replace(~r/@push\(['"]([^'"]+)['"]\)(.*?)@endpush/s, contents, fn _, stack, body ->
       stacks = Process.get(:laravex_stacks, %{})
@@ -256,8 +314,45 @@ defmodule Laravex.View do
   end
 
   defp replace_directives(contents, assigns) do
-    Regex.replace(~r/@if\((.*?)\)(.*?)@endif/s, contents, fn _, expr, body ->
-      if truthy?(eval_expr(expr, assigns)), do: body, else: ""
+    contents
+    |> then(fn html ->
+      Regex.replace(~r/@unless\((.*?)\)(.*?)@endunless/s, html, fn _, expr, body ->
+        if truthy?(eval_expr(expr, assigns)), do: "", else: body
+      end)
+    end)
+    |> then(fn html ->
+      Regex.replace(~r/@if\((.*?)\)(.*?)@endif/s, html, fn _, expr, body ->
+        evaluate_if_chain(expr, body, assigns)
+      end)
+    end)
+  end
+
+  defp evaluate_if_chain(first_expr, body, assigns) do
+    segments =
+      Regex.split(~r/@(elseif\([^)]+\)|else)/, body, include_captures: true, trim: false)
+
+    # segments: [before_elseif_or_else, capture, after, capture, after, ...]
+    branches = [{first_expr, Enum.at(segments, 0) || ""}]
+
+    branches =
+      segments
+      |> Enum.drop(1)
+      |> Enum.chunk_every(2)
+      |> Enum.reduce(branches, fn
+        ["elseif(" <> rest, content] ->
+          expr = String.trim_trailing(rest, ")")
+          branches ++ [{expr, content}]
+
+        ["else", content] ->
+          branches ++ [{:else, content}]
+
+        _ ->
+          branches
+      end)
+
+    Enum.find_value(branches, "", fn
+      {:else, content} -> content
+      {expr, content} -> if truthy?(eval_expr(expr, assigns)), do: content, else: nil
     end)
   end
 

@@ -7,7 +7,9 @@ defmodule Laravex.Http.Middleware do
               "web" => [
                 Laravex.Http.Middleware.EncryptCookies,
                 Laravex.Http.Middleware.StartSession,
+                Laravex.Http.Middleware.MethodOverride,
                 Laravex.Http.Middleware.ShareErrors,
+                Laravex.Http.Middleware.ShareFlash,
                 Laravex.Http.Middleware.VerifyCsrfToken,
                 Laravex.Http.Middleware.SubstituteBindings
               ],
@@ -128,6 +130,44 @@ defmodule Laravex.Http.Middleware.ShareErrors do
 
     {:ok, %{request | errors: errors, old: old, session: session}}
   end
+end
+
+defmodule Laravex.Http.Middleware.ShareFlash do
+  @moduledoc "Ages `_flash.*` session keys onto `request.flash` for one request."
+
+  def handle(request, _opts) do
+    {flash, session} =
+      Enum.reduce(request.session, {%{}, %{}}, fn {k, v}, {flash, session} ->
+        key = to_string(k)
+
+        if String.starts_with?(key, "_flash.") do
+          {Map.put(flash, String.trim_leading(key, "_flash."), v), session}
+        else
+          {flash, Map.put(session, key, v)}
+        end
+      end)
+
+    {:ok, %{request | flash: flash, session: session}}
+  end
+end
+
+defmodule Laravex.Http.Middleware.MethodOverride do
+  @moduledoc "Honor `_method` spoofing on POST (Laravel method field)."
+
+  def handle(%{method: "POST"} = request, _opts) do
+    case Map.get(request.params, "_method") || Map.get(request.params, :_method) do
+      nil ->
+        {:ok, request}
+
+      method when is_binary(method) ->
+        {:ok, %{request | method: String.upcase(method)}}
+
+      _ ->
+        {:ok, request}
+    end
+  end
+
+  def handle(request, _opts), do: {:ok, request}
 end
 
 defmodule Laravex.Http.Middleware.SubstituteBindings do

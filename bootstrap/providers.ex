@@ -5,7 +5,9 @@ defmodule Bootstrap.Providers do
 
   def list do
     [
-      App.Providers.AppServiceProvider
+      App.Providers.AppServiceProvider,
+      App.Providers.EventServiceProvider
     ]
   end
 end
+

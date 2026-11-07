@@ -114,6 +114,9 @@ defmodule Laravex.Foundation.Application do
     try do
       Laravex.Http.Kernel.handle(request, app)
     rescue
+      e in [Laravex.Validation.Failed] ->
+        Laravex.Foundation.Exceptions.render(app.exceptions, request, e)
+
       e ->
         Laravex.Foundation.Exceptions.render(app.exceptions, request, e)
     end

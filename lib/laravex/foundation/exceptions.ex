@@ -18,38 +18,59 @@ defmodule Laravex.Foundation.Exceptions do
   end
 
   def render(exceptions, request, error) do
-    report(exceptions, error)
+    case error do
+      %Laravex.Validation.Failed{errors: errors, request: failed_request} ->
+        render_validation_failed(exceptions, failed_request || request, errors)
 
-    status =
-      case error do
-        %Laravex.Http.HttpException{status: s} -> s
-        %Laravex.Support.DumpException{} -> 500
-        _ -> 500
-      end
+      _ ->
+        report(exceptions, error)
 
-    message = Exception.message(error)
-    debug? = Laravex.Config.Repository.get("app.debug", false) in [true, "true", 1, "1"]
+        status =
+          case error do
+            %Laravex.Http.HttpException{status: s} -> s
+            %Laravex.Support.DumpException{} -> 500
+            _ -> 500
+          end
 
-    if should_json?(exceptions, request) do
-      body =
-        Laravex.Support.JSON.encode!(%{
-          message: message,
-          exception: error.__struct__ |> to_string(),
-          debug: if(debug?, do: Exception.format(:error, error, []), else: nil)
-        })
+        message = Exception.message(error)
+        debug? = Laravex.Config.Repository.get("app.debug", false) in [true, "true", 1, "1"]
 
-      Laravex.Http.Response.new(status, body, [
-        {"content-type", "application/json; charset=utf-8"}
-      ])
-    else
-      body =
-        if debug? do
-          debug_page(status, message, error)
+        if should_json?(exceptions, request) do
+          body =
+            Laravex.Support.JSON.encode!(%{
+              message: message,
+              exception: error.__struct__ |> to_string(),
+              debug: if(debug?, do: Exception.format(:error, error, []), else: nil)
+            })
+
+          Laravex.Http.Response.new(status, body, [
+            {"content-type", "application/json; charset=utf-8"}
+          ])
         else
-          "<!DOCTYPE html><html><body><h1>#{status}</h1><p>Server Error</p></body></html>"
-        end
+          body =
+            if debug? do
+              debug_page(status, message, error)
+            else
+              "<!DOCTYPE html><html><body><h1>#{status}</h1><p>Server Error</p></body></html>"
+            end
 
-      Laravex.Http.Response.html(body, status)
+          Laravex.Http.Response.html(body, status)
+        end
+    end
+  end
+
+  defp render_validation_failed(exceptions, request, errors) do
+    if should_json?(exceptions, request) do
+      resp = Laravex.Http.Response.json(%{message: "The given data was invalid.", errors: errors}, 422)
+      Laravex.Http.Kernel.persist_session(request, resp)
+    else
+      back =
+        Laravex.Http.Request.header(request, "referer") ||
+          Map.get(request.session || %{}, "_previous.url") ||
+          "/"
+
+      resp = Laravex.Http.Response.redirect(back)
+      Laravex.Http.Kernel.persist_session(request, resp)
     end
   end
 

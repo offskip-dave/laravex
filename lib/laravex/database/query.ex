@@ -29,6 +29,27 @@ defmodule Laravex.Database.Query do
     %{q | wheres: q.wheres ++ [{"#{column} IS NOT NULL", :skip}]}
   end
 
+  def where_in(%__MODULE__{} = q, column, values) when is_list(values) do
+    if values == [] do
+      %{q | wheres: q.wheres ++ [{"1 = 0", :skip}]}
+    else
+      placeholders = Enum.map_join(values, ", ", fn _ -> "?" end)
+
+      %{
+        q
+        | wheres: q.wheres ++ [{"#{column} IN (#{placeholders})", :in}],
+          bindings: q.bindings ++ values
+      }
+    end
+  end
+
+  def exists?(%__MODULE__{} = q) do
+    case q |> limit(1) |> get() do
+      [] -> false
+      _ -> true
+    end
+  end
+
   def order_by(%__MODULE__{} = q, column, dir \\ "asc") do
     %{q | order: "#{column} #{String.upcase(to_string(dir))}"}
   end

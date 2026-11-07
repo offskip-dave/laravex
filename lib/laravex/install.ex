@@ -28,15 +28,8 @@ defmodule Laravex.Install do
     end
     """)
 
-    # Wire into bootstrap if not present
-    boot = Path.join(base, "bootstrap/app.ex")
-    contents = File.read!(boot)
-
-    unless String.contains?(contents, "Routes.Api") do
-      IO.puts("API routes file created at routes/api.ex — register Routes.Api in bootstrap if needed.")
-    end
-
-    IO.puts("API scaffolding installed (routes/api.ex + token auth). Recompile to load Routes.Api.")
+    IO.puts("API scaffolding installed (routes/api.ex + token auth).")
+    IO.puts("Routes.Api is auto-registered on boot when the module is compiled. Run: mix compile && ./artisan migrate")
     :ok
   end
 

@@ -72,6 +72,19 @@ defmodule Laravex.Database.Migrator do
     migrate()
   end
 
+  def wipe do
+    tables()
+    |> Enum.reject(&(&1 in ["sqlite_sequence"]))
+    |> Enum.each(&Laravex.Database.Schema.drop_if_exists/1)
+
+    :ok
+  end
+
+  def fresh do
+    wipe()
+    migrate()
+  end
+
   def status do
     ensure_repository!()
     ran = MapSet.new(ran_names())

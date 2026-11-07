@@ -67,13 +67,21 @@ defmodule Laravex.Http.Middleware.Authorize do
 
     cond do
       is_nil(user) ->
-        {:halt, Laravex.Http.Response.json(%{message: "Unauthenticated."}, 401)}
+        if Laravex.Http.Request.expects_json?(request) do
+          {:halt, Laravex.Http.Response.json(%{message: "Unauthenticated."}, 401)}
+        else
+          {:halt, Laravex.Http.Response.redirect(Keyword.get(opts, :redirect, "/login"))}
+        end
 
       Laravex.Auth.Gate.allows?(user, ability, resource) ->
         {:ok, request}
 
       true ->
-        {:halt, Laravex.Http.Response.json(%{message: "This action is unauthorized."}, 403)}
+        if Laravex.Http.Request.expects_json?(request) do
+          {:halt, Laravex.Http.Response.json(%{message: "This action is unauthorized."}, 403)}
+        else
+          {:halt, Laravex.Http.Response.html("Forbidden", 403)}
+        end
     end
   end
 end
