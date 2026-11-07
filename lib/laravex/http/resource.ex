@@ -11,7 +11,10 @@ defmodule Laravex.Http.Resource do
             name: user.name,
             posts: when_loaded(user, :posts)
           })
+          |> Map.merge(merge_when(user.admin?, %{role: "admin"}))
         end
+
+        def additional(_user), do: %{meta: %{version: 1}}
       end
   """
 
@@ -19,22 +22,39 @@ defmodule Laravex.Http.Resource do
 
   defmacro __using__(_opts) do
     quote do
-      import Laravex.Http.Resource, only: [when_loaded: 2, when_loaded: 3, merge: 1]
+      import Laravex.Http.Resource,
+        only: [when_loaded: 2, when_loaded: 3, merge: 1, merge_when: 2]
+
+      def wrap, do: "data"
+      def additional(_resource), do: %{}
 
       def collection(models) when is_list(models), do: Enum.map(models, &to_map/1)
 
       def make(model) do
-        Laravex.Http.Response.json(%{data: to_map(model)})
+        Laravex.Http.Resource.respond(__MODULE__, to_map(model), additional(model))
       end
 
       def collection_response(models) when is_list(models) do
-        Laravex.Http.Response.json(%{data: collection(models)})
+        Laravex.Http.Resource.respond(__MODULE__, collection(models), additional(models))
       end
 
       def paginated(page) when is_map(page) do
         Laravex.Http.Response.json_paginated(page, &to_map/1)
       end
+
+      defoverridable wrap: 0, additional: 1
     end
+  end
+
+  def respond(mod, data, extra \\ %{}) when is_map(extra) do
+    payload =
+      case mod.wrap() do
+        false -> data
+        nil -> data
+        key -> %{to_string(key) => data}
+      end
+
+    Laravex.Http.Response.json(Map.merge(payload, stringify_keys(extra)))
   end
 
   @doc """
@@ -53,12 +73,28 @@ defmodule Laravex.Http.Resource do
     end
   end
 
-  @doc "Drop MissingValue entries from a resource map (Laravel `mergeWhen` lite)."
+  @doc "Drop MissingValue entries from a resource map."
   def merge(attrs) when is_map(attrs) do
     attrs
     |> Enum.reject(fn {_k, v} -> v == @missing end)
     |> Map.new()
   end
 
+  @doc "Laravel `mergeWhen` — merge attrs when condition is truthy."
+  def merge_when(condition, attrs) when is_map(attrs) do
+    if truthy?(condition), do: merge(attrs), else: %{}
+  end
+
   def missing_value, do: @missing
+
+  defp truthy?(nil), do: false
+  defp truthy?(false), do: false
+  defp truthy?(""), do: false
+  defp truthy?([]), do: false
+  defp truthy?(%{} = m), do: map_size(m) > 0
+  defp truthy?(_), do: true
+
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn {k, v} -> {to_string(k), v} end)
+  end
 end

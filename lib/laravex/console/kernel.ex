@@ -28,6 +28,8 @@ defmodule Laravex.Console.Kernel do
     "queue:retry" => {&__MODULE__.cmd_queue_retry/1, "Retry a failed queue job"},
     "queue:forget" => {&__MODULE__.cmd_queue_forget/1, "Delete a failed queue job"},
     "queue:flush" => {&__MODULE__.cmd_queue_flush/1, "Flush all of the failed queue jobs"},
+    "queue:batches" => {&__MODULE__.cmd_queue_batches/1, "List the job batches"},
+    "queue:batch" => {&__MODULE__.cmd_queue_batch/1, "Show or cancel a job batch"},
     "schedule:run" => {&__MODULE__.cmd_schedule/1, "Run due scheduled tasks"},
     "schedule:list" => {&__MODULE__.cmd_schedule_list/1, "List all scheduled tasks"},
     "event:list" => {&__MODULE__.cmd_event_list/1, "List registered events and listeners"},
@@ -251,6 +253,58 @@ defmodule Laravex.Console.Kernel do
     Laravex.Queue.Worker.flush_failed()
     IO.puts("All failed jobs deleted successfully.")
   end
+
+  def cmd_queue_batches(_) do
+    batches = Laravex.Bus.list_batches()
+
+    if batches == [] do
+      IO.puts("No job batches found.")
+    else
+      IO.puts(
+        String.pad_trailing("ID", 38) <>
+          String.pad_trailing("Name", 18) <>
+          String.pad_trailing("Total", 8) <>
+          String.pad_trailing("Pending", 10) <>
+          String.pad_trailing("Failed", 8) <> "Cancelled"
+      )
+
+      Enum.each(batches, fn b ->
+        IO.puts(
+          String.pad_trailing(to_string(b.id), 38) <>
+            String.pad_trailing(to_string(b.name || ""), 18) <>
+            String.pad_trailing(to_string(b.total_jobs), 8) <>
+            String.pad_trailing(to_string(b.pending_jobs), 10) <>
+            String.pad_trailing(to_string(b.failed_jobs), 8) <>
+            to_string(b.cancelled_at || "")
+        )
+      end)
+    end
+  end
+
+  def cmd_queue_batch(["cancel", id | _]) do
+    case Laravex.Bus.cancel(id) do
+      {:ok, batch} -> IO.puts("Batch [#{batch.id}] cancelled.")
+      {:error, :not_found} -> IO.puts(:stderr, "No batch matches [#{id}].")
+    end
+  end
+
+  def cmd_queue_batch([id | _]) do
+    case Laravex.Bus.find_batch(id) do
+      nil ->
+        IO.puts(:stderr, "No batch matches [#{id}].")
+
+      b ->
+        IO.puts("ID: #{b.id}")
+        IO.puts("Name: #{b.name}")
+        IO.puts("Total / Pending / Failed: #{b.total_jobs} / #{b.pending_jobs} / #{b.failed_jobs}")
+        IO.puts("Failed job ids: #{inspect(b.failed_job_ids)}")
+        IO.puts("Created: #{b.created_at}")
+        IO.puts("Finished: #{b.finished_at}")
+        IO.puts("Cancelled: #{b.cancelled_at}")
+    end
+  end
+
+  def cmd_queue_batch(_), do: IO.puts("Usage: artisan queue:batch {id} | queue:batch cancel {id}")
 
   def cmd_db_show(args) do
     table =

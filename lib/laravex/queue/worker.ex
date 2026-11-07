@@ -52,7 +52,7 @@ defmodule Laravex.Queue.Worker do
 
   defp record_batch(opts, status) do
     case Keyword.get(opts, :batch_id) do
-      id when is_binary(id) and id != "" -> Laravex.Bus.record_job_finished(id, status)
+      id when is_binary(id) and id != "" -> Laravex.Bus.record_job_finished(id, status, nil)
       _ -> :ok
     end
   end
@@ -202,7 +202,7 @@ defmodule Laravex.Queue.Worker do
       result = job_mod.handle(args)
       Laravex.Observability.record_job(job_mod, result)
       Laravex.Database.Connection.execute("DELETE FROM jobs WHERE id = ?", [id])
-      Laravex.Bus.record_job_finished(data["batch_id"], :ok)
+      Laravex.Bus.record_job_finished(data["batch_id"], :ok, id)
       result
     rescue
       e ->
@@ -251,7 +251,7 @@ defmodule Laravex.Queue.Worker do
         )
       end
 
-      Laravex.Bus.record_job_finished(Map.get(data, "batch_id"), :failed)
+      Laravex.Bus.record_job_finished(Map.get(data, "batch_id"), :failed, id)
     end
   end
 

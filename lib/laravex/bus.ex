@@ -13,17 +13,16 @@ defmodule Laravex.Bus do
   """
 
   defmodule Batch do
-    defstruct [
-      :id,
-      :name,
-      :total_jobs,
-      :pending_jobs,
-      :failed_jobs,
-      :options,
-      :created_at,
-      :finished_at,
-      :cancelled_at
-    ]
+    defstruct id: nil,
+              name: nil,
+              total_jobs: 0,
+              pending_jobs: 0,
+              failed_jobs: 0,
+              failed_job_ids: [],
+              options: nil,
+              created_at: nil,
+              finished_at: nil,
+              cancelled_at: nil
   end
 
   def chain(jobs) when is_list(jobs) do
@@ -121,24 +120,80 @@ defmodule Laravex.Bus do
     end
   end
 
-  def record_job_finished(batch_id, status) when is_binary(batch_id) and status in [:ok, :failed] do
-    batch = find_batch(batch_id)
-    if is_nil(batch), do: :ok, else: do_record(batch, status)
+  def list_batches(limit \\ 50) do
+    if Laravex.Database.Schema.has_table?("job_batches") do
+      Laravex.Database.Connection.query(
+        "SELECT * FROM job_batches ORDER BY created_at DESC LIMIT ?",
+        [limit]
+      )
+      |> Enum.map(&from_row/1)
+    else
+      []
+    end
   end
 
-  def record_job_finished(_, _), do: :ok
+  def cancel(%Batch{id: id}), do: cancel(id)
 
-  defp do_record(%Batch{} = batch, status) do
+  def cancel(id) when is_binary(id) do
+    batch = find_batch(id)
+
+    if is_nil(batch) do
+      {:error, :not_found}
+    else
+      now = System.system_time(:second)
+
+      Laravex.Database.Connection.execute(
+        "UPDATE job_batches SET cancelled_at = ?, finished_at = COALESCE(finished_at, ?) WHERE id = ?",
+        [now, now, id]
+      )
+
+      # Drop unfinished jobs belonging to this batch (payload contains batch_id)
+      if Laravex.Database.Schema.has_table?("jobs") do
+        Laravex.Database.Connection.execute(
+          "DELETE FROM jobs WHERE payload LIKE ?",
+          ["%\"batch_id\":\"#{id}\"%"]
+        )
+      end
+
+      {:ok, find_batch(id)}
+    end
+  end
+
+  def cancelled?(%Batch{cancelled_at: t}) when not is_nil(t), do: true
+  def cancelled?(_), do: false
+
+  def record_job_finished(batch_id, status, job_id \\ nil)
+
+  def record_job_finished(batch_id, status, job_id)
+      when is_binary(batch_id) and status in [:ok, :failed] do
+    batch = find_batch(batch_id)
+    if is_nil(batch), do: :ok, else: do_record(batch, status, job_id)
+  end
+
+  def record_job_finished(_, _, _), do: :ok
+
+  defp do_record(%Batch{} = batch, status, job_id) do
     pending = max(batch.pending_jobs - 1, 0)
     failed = if status == :failed, do: batch.failed_jobs + 1, else: batch.failed_jobs
     finished_at = if pending == 0, do: System.system_time(:second), else: batch.finished_at
 
+    failed_ids =
+      if status == :failed and not is_nil(job_id) do
+        (batch.failed_job_ids ++ [to_string(job_id)]) |> Enum.uniq()
+      else
+        batch.failed_job_ids
+      end
+
     Laravex.Database.Connection.execute(
-      "UPDATE job_batches SET pending_jobs = ?, failed_jobs = ?, finished_at = ? WHERE id = ?",
-      [pending, failed, finished_at, batch.id]
+      """
+      UPDATE job_batches
+      SET pending_jobs = ?, failed_jobs = ?, finished_at = ?, failed_job_ids = ?
+      WHERE id = ?
+      """,
+      [pending, failed, finished_at, Laravex.Support.JSON.encode!(failed_ids), batch.id]
     )
 
-    if pending == 0 do
+    if pending == 0 and not cancelled?(batch) do
       fire_callbacks(find_batch(batch.id))
     end
 
@@ -223,10 +278,22 @@ defmodule Laravex.Bus do
       total_jobs: row["total_jobs"] || 0,
       pending_jobs: row["pending_jobs"] || 0,
       failed_jobs: row["failed_jobs"] || 0,
+      failed_job_ids: decode_failed_ids(row["failed_job_ids"]),
       options: row["options"],
       created_at: row["created_at"],
       finished_at: row["finished_at"],
       cancelled_at: row["cancelled_at"]
     }
   end
+
+  defp decode_failed_ids(nil), do: []
+  defp decode_failed_ids(json) when is_binary(json) do
+    case Laravex.Support.JSON.decode(json) do
+      {:ok, list} when is_list(list) -> Enum.map(list, &to_string/1)
+      _ -> []
+    end
+  end
+
+  defp decode_failed_ids(list) when is_list(list), do: Enum.map(list, &to_string/1)
+  defp decode_failed_ids(_), do: []
 end

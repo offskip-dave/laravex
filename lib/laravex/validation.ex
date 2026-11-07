@@ -13,12 +13,12 @@ defmodule Laravex.Validation do
     def message(_), do: "The given data was invalid."
   end
 
-  def validate(data, rules) when is_map(data) and is_map(rules) do
+  def validate(data, rules, opts \\ []) when is_map(data) and is_map(rules) do
     errors =
       Enum.reduce(rules, %{}, fn {field, rule_spec}, acc ->
         field = to_string(field)
         value = Map.get(data, field) || Map.get(data, String.to_atom(field))
-        field_errors = check(field, value, normalize_rules(rule_spec), data)
+        field_errors = check(field, value, normalize_rules(rule_spec), data, opts)
 
         if field_errors == [] do
           acc
@@ -28,14 +28,14 @@ defmodule Laravex.Validation do
       end)
 
     if map_size(errors) == 0 do
-      {:ok, data}
+      {:ok, only_rule_keys(data, rules)}
     else
       {:error, errors}
     end
   end
 
-  def validate!(data, rules) do
-    case validate(data, rules) do
+  def validate!(data, rules, opts \\ []) do
+    case validate(data, rules, opts) do
       {:ok, data} -> data
       {:error, errors} -> raise Error, errors: errors
     end
@@ -44,11 +44,13 @@ defmodule Laravex.Validation do
   @doc """
   Validate request params. On failure, flashes `_errors` and `_old`.
   For non-JSON requests, raises `Failed` so the kernel can redirect back.
+
+  Options: `:messages` and `:attributes` maps (FormRequest `messages/0`, `attributes/0`).
   """
-  def validate_request(request, rules) do
+  def validate_request(request, rules, opts \\ []) do
     data = Map.merge(request.params, request.files || %{})
 
-    case validate(data, rules) do
+    case validate(data, rules, opts) do
       {:ok, validated} ->
         {:ok, validated, request}
 
@@ -64,6 +66,14 @@ defmodule Laravex.Validation do
     end
   end
 
+  def only_rule_keys(data, rules) when is_map(data) and is_map(rules) do
+    keys = rules |> Map.keys() |> Enum.map(&to_string/1) |> MapSet.new()
+
+    data
+    |> Enum.filter(fn {k, _} -> MapSet.member?(keys, to_string(k)) end)
+    |> Map.new(fn {k, v} -> {to_string(k), v} end)
+  end
+
   def flash_errors(request, errors) do
     request
     |> Laravex.Session.Store.put("_errors", errors)
@@ -76,214 +86,248 @@ defmodule Laravex.Validation do
   defp normalize_rules(rule) when is_atom(rule), do: [rule]
   defp normalize_rules(other), do: [other]
 
-  defp check(field, value, rules, data) do
+  defp check(field, value, rules, data, opts) do
     rule_strs = Enum.map(rules, &rule_name/1)
 
     if "sometimes" in rule_strs and not field_present?(data, field) do
       []
     else
       Enum.flat_map(rules, fn rule ->
-        case rule do
-          mod when is_atom(mod) and mod not in [nil, true, false] ->
-            run_rule_module(field, value, data, mod)
+        check_rule(field, value, rule, data)
+        |> Enum.map(&format_error(field, rule_name(rule), &1, opts))
+      end)
+    end
+  end
 
-          "required" ->
-            if blank?(value), do: ["The #{field} field is required."], else: []
+  defp format_error(field, rule, msg, opts) do
+    msgs = stringify_keys(Keyword.get(opts, :messages, %{}))
+    attrs = stringify_keys(Keyword.get(opts, :attributes, %{}))
+    label = Map.get(attrs, field) || humanize_field(field)
 
-          "required_if:" <> rest ->
-            conditional_required(field, value, data, rest, :if)
+    custom = Map.get(msgs, "#{field}.#{rule}") || Map.get(msgs, field)
+    base = if is_binary(custom), do: custom, else: msg
 
-          "required_unless:" <> rest ->
-            conditional_required(field, value, data, rest, :unless)
+    base
+    |> String.replace(":attribute", label)
+    |> String.replace("The #{field} ", "The #{label} ")
+    |> String.replace("the #{field} ", "the #{label} ")
+    |> String.replace("selected #{field} ", "selected #{label} ")
+    |> String.replace(" #{field} ", " #{label} ")
+    |> String.replace(" #{field}.", " #{label}.")
+  end
 
-          "prohibited" ->
-            if blank?(value), do: [], else: ["The #{field} field is prohibited."]
+  defp humanize_field(field) do
+    field |> to_string() |> String.replace("_", " ") |> String.replace(".", " ")
+  end
 
-          "prohibited_if:" <> rest ->
-            conditional_prohibited(field, value, data, rest, :if)
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn {k, v} -> {to_string(k), v} end)
+  end
 
-          "prohibited_unless:" <> rest ->
-            conditional_prohibited(field, value, data, rest, :unless)
+  defp stringify_keys(_), do: %{}
 
-          "sometimes" ->
+  defp check_rule(field, value, rule, data) do
+    case rule do
+      mod when is_atom(mod) and mod not in [nil, true, false] ->
+        run_rule_module(field, value, data, mod)
+
+      "required" ->
+        if blank?(value), do: ["The #{field} field is required."], else: []
+
+      "required_if:" <> rest ->
+        conditional_required(field, value, data, rest, :if)
+
+      "required_unless:" <> rest ->
+        conditional_required(field, value, data, rest, :unless)
+
+      "prohibited" ->
+        if blank?(value), do: [], else: ["The #{field} field is prohibited."]
+
+      "prohibited_if:" <> rest ->
+        conditional_prohibited(field, value, data, rest, :if)
+
+      "prohibited_unless:" <> rest ->
+        conditional_prohibited(field, value, data, rest, :unless)
+
+      "sometimes" ->
+        []
+
+      "date" ->
+        if is_nil(value) or blank?(value) or valid_date?(value),
+          do: [],
+          else: ["The #{field} field must be a valid date."]
+
+      "date_format:" <> format ->
+        if is_nil(value) or blank?(value) or match_date_format?(value, format),
+          do: [],
+          else: ["The #{field} field must match the format #{format}."]
+
+      "string" ->
+        if is_nil(value) or is_binary(value),
+          do: [],
+          else: ["The #{field} field must be a string."]
+
+      "email" ->
+        if is_nil(value) or (is_binary(value) and String.contains?(value, "@")),
+          do: [],
+          else: ["The #{field} field must be a valid email."]
+
+      "confirmed" ->
+        other =
+          Map.get(data, field <> "_confirmation") ||
+            Map.get(data, String.to_atom(field <> "_confirmation"))
+
+        if to_string(value || "") == to_string(other || ""),
+          do: [],
+          else: ["The #{field} confirmation does not match."]
+
+      "min:" <> n ->
+        min_rule(field, value, String.to_integer(n))
+
+      "max:" <> n ->
+        max_rule(field, value, String.to_integer(n))
+
+      "integer" ->
+        if is_nil(value) or is_integer(value) or
+             (is_binary(value) and match?({_, ""}, Integer.parse(value))),
+           do: [],
+           else: ["The #{field} field must be an integer."]
+
+      "numeric" ->
+        if is_nil(value) or numeric?(value),
+          do: [],
+          else: ["The #{field} field must be a number."]
+
+      "boolean" ->
+        if value in [true, false, 1, 0, "1", "0", "true", "false", nil],
+          do: [],
+          else: ["The #{field} field must be true or false."]
+
+      "nullable" ->
+        []
+
+      "present" ->
+        if field_present?(data, field),
+          do: [],
+          else: ["The #{field} field must be present."]
+
+      "url" ->
+        if is_nil(value) or blank?(value) or valid_url?(value),
+          do: [],
+          else: ["The #{field} field must be a valid URL."]
+
+      "uuid" ->
+        if is_nil(value) or blank?(value) or valid_uuid?(value),
+          do: [],
+          else: ["The #{field} field must be a valid UUID."]
+
+      "after:" <> other ->
+        date_compare_rule(field, value, data, String.trim(other), :after)
+
+      "before:" <> other ->
+        date_compare_rule(field, value, data, String.trim(other), :before)
+
+      "file" ->
+        case value do
+          %Laravex.Http.UploadedFile{} -> []
+          nil -> []
+          _ -> ["The #{field} field must be a file."]
+        end
+
+      "image" ->
+        case value do
+          %Laravex.Http.UploadedFile{} = f ->
+            if Laravex.Http.UploadedFile.image?(f),
+              do: [],
+              else: ["The #{field} field must be an image."]
+
+          nil ->
             []
 
-          "date" ->
-            if is_nil(value) or blank?(value) or valid_date?(value),
-              do: [],
-              else: ["The #{field} field must be a valid date."]
+          _ ->
+            ["The #{field} field must be an image."]
+        end
 
-          "date_format:" <> format ->
-            if is_nil(value) or blank?(value) or match_date_format?(value, format),
-              do: [],
-              else: ["The #{field} field must match the format #{format}."]
+      "mimes:" <> list ->
+        mime_ext_rule(field, value, list)
 
-          "string" ->
-            if is_nil(value) or is_binary(value), do: [], else: ["The #{field} field must be a string."]
+      "mimetypes:" <> list ->
+        mimetype_rule(field, value, list)
 
-          "email" ->
-            if is_nil(value) or (is_binary(value) and String.contains?(value, "@")),
-              do: [],
-              else: ["The #{field} field must be a valid email."]
+      "in:" <> list ->
+        allowed = String.split(list, ",")
 
-          "confirmed" ->
-            other =
-              Map.get(data, field <> "_confirmation") ||
-                Map.get(data, String.to_atom(field <> "_confirmation"))
+        if is_nil(value) or to_string(value) in allowed,
+          do: [],
+          else: ["The selected #{field} is invalid."]
 
-            if to_string(value || "") == to_string(other || ""),
-              do: [],
-              else: ["The #{field} confirmation does not match."]
+      "regex:" <> pattern ->
+        {:ok, re} = Regex.compile(pattern)
 
-          "min:" <> n ->
-            min_rule(field, value, String.to_integer(n))
+        if is_nil(value) or (is_binary(value) and Regex.match?(re, value)),
+          do: [],
+          else: ["The #{field} format is invalid."]
 
-          "max:" <> n ->
-            max_rule(field, value, String.to_integer(n))
+      "unique:" <> rest ->
+        unique_error(field, value, rest)
 
-          "integer" ->
-            if is_nil(value) or is_integer(value) or
-                 (is_binary(value) and match?({_, ""}, Integer.parse(value))),
-               do: [],
-               else: ["The #{field} field must be an integer."]
+      "exists:" <> rest ->
+        exists_error(field, value, rest)
 
-          "numeric" ->
-            if is_nil(value) or numeric?(value),
-              do: [],
-              else: ["The #{field} field must be a number."]
+      "array" ->
+        if is_nil(value) or is_list(value) or is_map(value),
+          do: [],
+          else: ["The #{field} field must be an array."]
 
-          "boolean" ->
-            if value in [true, false, 1, 0, "1", "0", "true", "false", nil],
-              do: [],
-              else: ["The #{field} field must be true or false."]
+      "filled" ->
+        if blank?(value), do: ["The #{field} field must have a value."], else: []
 
-          "nullable" ->
-            []
+      "same:" <> other_field ->
+        other = Map.get(data, other_field) || Map.get(data, String.to_atom(other_field))
 
-          "present" ->
-            if field_present?(data, field),
-              do: [],
-              else: ["The #{field} field must be present."]
+        if to_string(value || "") == to_string(other || ""),
+          do: [],
+          else: ["The #{field} and #{other_field} must match."]
 
-          "url" ->
-            if is_nil(value) or blank?(value) or valid_url?(value),
-              do: [],
-              else: ["The #{field} field must be a valid URL."]
-
-          "uuid" ->
-            if is_nil(value) or blank?(value) or valid_uuid?(value),
-              do: [],
-              else: ["The #{field} field must be a valid UUID."]
-
-          "after:" <> other ->
-            date_compare_rule(field, value, data, String.trim(other), :after)
-
-          "before:" <> other ->
-            date_compare_rule(field, value, data, String.trim(other), :before)
-
-          "file" ->
-            case value do
-              %Laravex.Http.UploadedFile{} -> []
-              nil -> []
-              _ -> ["The #{field} field must be a file."]
-            end
-
-          "image" ->
-            case value do
-              %Laravex.Http.UploadedFile{} = f ->
-                if Laravex.Http.UploadedFile.image?(f),
-                  do: [],
-                  else: ["The #{field} field must be an image."]
-
-              nil ->
-                []
-
-              _ ->
-                ["The #{field} field must be an image."]
-            end
-
-          "mimes:" <> list ->
-            mime_ext_rule(field, value, list)
-
-          "mimetypes:" <> list ->
-            mimetype_rule(field, value, list)
-
-          "in:" <> list ->
-            allowed = String.split(list, ",")
-
-            if is_nil(value) or to_string(value) in allowed,
-              do: [],
-              else: ["The selected #{field} is invalid."]
-
-          "regex:" <> pattern ->
-            {:ok, re} = Regex.compile(pattern)
-
-            if is_nil(value) or (is_binary(value) and Regex.match?(re, value)),
-              do: [],
-              else: ["The #{field} format is invalid."]
-
-          "unique:" <> rest ->
-            unique_error(field, value, rest)
-
-          "exists:" <> rest ->
-            exists_error(field, value, rest)
-
-          "array" ->
-            if is_nil(value) or is_list(value) or is_map(value),
-              do: [],
-              else: ["The #{field} field must be an array."]
-
-          "filled" ->
-            if blank?(value), do: ["The #{field} field must have a value."], else: []
-
-          "same:" <> other_field ->
-            other = Map.get(data, other_field) || Map.get(data, String.to_atom(other_field))
-
-            if to_string(value || "") == to_string(other || ""),
-              do: [],
-              else: ["The #{field} and #{other_field} must match."]
-
-          "between:" <> rest ->
-            case String.split(rest, ",") do
-              [a, b] ->
-                min = String.to_integer(String.trim(a))
-                max = String.to_integer(String.trim(b))
-
-                cond do
-                  is_binary(value) and (String.length(value) < min or String.length(value) > max) ->
-                    ["The #{field} field must be between #{min} and #{max} characters."]
-
-                  is_integer(value) and (value < min or value > max) ->
-                    ["The #{field} field must be between #{min} and #{max}."]
-
-                  true ->
-                    []
-                end
-
-              _ ->
-                []
-            end
-
-          "digits:" <> n ->
-            len = String.to_integer(n)
-
-            if is_binary(value) and Regex.match?(~r/^\d+$/, value) and String.length(value) == len,
-              do: [],
-              else: ["The #{field} field must be #{len} digits."]
-
-          "size:" <> n ->
-            size = String.to_integer(n)
+      "between:" <> rest ->
+        case String.split(rest, ",") do
+          [a, b] ->
+            min = String.to_integer(String.trim(a))
+            max = String.to_integer(String.trim(b))
 
             cond do
-              is_binary(value) and String.length(value) == size -> []
-              is_list(value) and length(value) == size -> []
-              true -> ["The #{field} field must be #{size}."]
+              is_binary(value) and (String.length(value) < min or String.length(value) > max) ->
+                ["The #{field} field must be between #{min} and #{max} characters."]
+
+              is_integer(value) and (value < min or value > max) ->
+                ["The #{field} field must be between #{min} and #{max}."]
+
+              true ->
+                []
             end
 
-          other ->
-            custom_rule(field, value, other)
+          _ ->
+            []
         end
-      end)
+
+      "digits:" <> n ->
+        len = String.to_integer(n)
+
+        if is_binary(value) and Regex.match?(~r/^\d+$/, value) and String.length(value) == len,
+          do: [],
+          else: ["The #{field} field must be #{len} digits."]
+
+      "size:" <> n ->
+        size = String.to_integer(n)
+
+        cond do
+          is_binary(value) and String.length(value) == size -> []
+          is_list(value) and length(value) == size -> []
+          true -> ["The #{field} field must be #{size}."]
+        end
+
+      other ->
+        custom_rule(field, value, other)
     end
   end
 
@@ -357,8 +401,12 @@ defmodule Laravex.Validation do
 
   defp valid_date?(value) when is_binary(value) do
     cond do
-      match?({:ok, _}, Date.from_iso8601(value)) -> true
-      match?({:ok, _, _}, DateTime.from_iso8601(value)) -> true
+      match?({:ok, _}, Date.from_iso8601(value)) ->
+        true
+
+      match?({:ok, _, _}, DateTime.from_iso8601(value)) ->
+        true
+
       Regex.match?(~r/^\d{4}-\d{2}-\d{2}/, value) ->
         case Date.from_iso8601(String.slice(value, 0, 10)) do
           {:ok, _} -> true
@@ -544,7 +592,9 @@ defmodule Laravex.Validation do
   defp mime_ext_rule(_field, "", _), do: []
 
   defp mime_ext_rule(field, %Laravex.Http.UploadedFile{} = file, list) do
-    allowed = list |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.map(&String.downcase/1)
+    allowed =
+      list |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.map(&String.downcase/1)
+
     ext = Laravex.Http.UploadedFile.extension(file)
 
     if ext in allowed,
@@ -558,12 +608,15 @@ defmodule Laravex.Validation do
   defp mimetype_rule(_field, "", _), do: []
 
   defp mimetype_rule(field, %Laravex.Http.UploadedFile{} = file, list) do
-    allowed = list |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.map(&String.downcase/1)
+    allowed =
+      list |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.map(&String.downcase/1)
+
     type = String.downcase(to_string(file.content_type || ""))
 
-    if type in allowed or Enum.any?(allowed, &String.starts_with?(type, String.trim_trailing(&1, "/*") <> "/")),
-      do: [],
-      else: ["The #{field} field must be a file of type: #{Enum.join(allowed, ", ")}."]
+    if type in allowed or
+         Enum.any?(allowed, &String.starts_with?(type, String.trim_trailing(&1, "/*") <> "/")),
+       do: [],
+       else: ["The #{field} field must be a file of type: #{Enum.join(allowed, ", ")}."]
   end
 
   defp mimetype_rule(field, _, _), do: ["The #{field} field must be a file."]
@@ -584,7 +637,9 @@ defmodule Laravex.Validation do
 
   defp to_number(value) when is_binary(value) do
     case Integer.parse(value) do
-      {i, ""} -> i
+      {i, ""} ->
+        i
+
       _ ->
         case Float.parse(value) do
           {f, ""} -> f

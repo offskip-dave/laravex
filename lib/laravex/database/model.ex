@@ -158,6 +158,18 @@ defmodule Laravex.Database.Model do
         Laravex.Database.Model.simple_paginate(__MODULE__, per_page, page, opts)
       end
 
+      def chunk(size, fun) when is_integer(size) and is_function(fun, 1) do
+        Laravex.Database.Query.chunk(query(), size, fn rows ->
+          fun.(Enum.map(rows, &from_row/1))
+        end)
+      end
+
+      def chunk_by_id(size, fun, opts \\ []) when is_integer(size) and is_function(fun, 1) do
+        Laravex.Database.Query.chunk_by_id(query(), size, fn rows ->
+          fun.(Enum.map(rows, &from_row/1))
+        end, opts)
+      end
+
       def has_many(name, related, foreign_key \\ nil) do
         foreign_key =
           foreign_key || Macro.underscore(__MODULE__ |> Module.split() |> List.last()) <> "_id"

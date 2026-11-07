@@ -161,6 +161,69 @@ defmodule Laravex.Database.Query do
     end
   end
 
+  @doc "Process results in pages of `size` (offset-based)."
+  def chunk(%__MODULE__{} = q, size, fun)
+      when is_integer(size) and size > 0 and is_function(fun, 1) do
+    do_chunk(q, size, 0, fun)
+  end
+
+  defp do_chunk(q, size, page, fun) do
+    rows =
+      q
+      |> offset(page * size)
+      |> limit(size)
+      |> get()
+
+    cond do
+      rows == [] ->
+        :ok
+
+      true ->
+        fun.(rows)
+        if length(rows) < size, do: :ok, else: do_chunk(q, size, page + 1, fun)
+    end
+  end
+
+  @doc """
+  Process results in keyset pages ordered by `column` (default `id`).
+
+      Query.table(\"users\") |> Query.chunk_by_id(100, fn rows -> ... end)
+  """
+  def chunk_by_id(%__MODULE__{} = q, size, fun, opts \\ [])
+      when is_integer(size) and size > 0 and is_function(fun, 1) do
+    column = Keyword.get(opts, :column, "id")
+    do_chunk_by_id(q, size, fun, to_string(column), nil)
+  end
+
+  defp do_chunk_by_id(base_q, size, fun, column, last_id) do
+    q =
+      if is_nil(last_id) do
+        base_q
+      else
+        where(base_q, column, ">", last_id)
+      end
+
+    rows =
+      q
+      |> order_by(column, "asc")
+      |> limit(size)
+      |> get()
+
+    cond do
+      rows == [] ->
+        :ok
+
+      true ->
+        fun.(rows)
+        last = List.last(rows)
+        next_id = Map.get(last, column) || Map.get(last, String.to_atom(column))
+
+        if length(rows) < size or is_nil(next_id),
+          do: :ok,
+          else: do_chunk_by_id(base_q, size, fun, column, next_id)
+    end
+  end
+
   defp aggregate(%__MODULE__{} = q, fn_name, column) do
     sql = "SELECT #{fn_name}(#{column}) AS aggregate FROM #{q.table}#{where_clause(q)}"
 
