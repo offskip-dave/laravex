@@ -1,0 +1,10 @@
+*.sqlite*
+.gitignore
+!*.ex
+!factories/
+!migrations/
+!seeders/
+!factories/**
+!migrations/**
+!seeders/**
+!/.gitignore

@@ -37,6 +37,8 @@ defmodule Laravex.Foundation.Application do
     Laravex.Env.load!(app.base_path)
     Laravex.Config.Repository.load!(app.base_path)
 
+    if Process.whereis(Laravex.Container), do: Laravex.Container.instance(:app, app)
+
     middleware = Laravex.Http.Middleware.new()
 
     middleware =
@@ -68,6 +70,9 @@ defmodule Laravex.Foundation.Application do
     if app.web_routes && Code.ensure_loaded?(Routes.Web) do
       Routes.Web.register()
     end
+
+    maybe_register(Module.concat(["Routes", "Api"]))
+    maybe_register(Module.concat(["Routes", "Auth"]))
 
     if app.console_routes && Code.ensure_loaded?(Routes.Console) do
       Routes.Console.register()
@@ -111,6 +116,12 @@ defmodule Laravex.Foundation.Application do
     rescue
       e ->
         Laravex.Foundation.Exceptions.render(app.exceptions, request, e)
+    end
+  end
+
+  defp maybe_register(mod) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :register, 0) do
+      apply(mod, :register, [])
     end
   end
 end

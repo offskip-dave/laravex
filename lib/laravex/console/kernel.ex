@@ -1,32 +1,274 @@
 defmodule Laravex.Console.Kernel do
-  @moduledoc """
-  Artisan-style console entrypoint.
-  """
+  @moduledoc "Artisan command dispatcher."
+
+  @commands %{
+    "inspire" => {&__MODULE__.cmd_inspire/1, "Display an inspiring quote"},
+    "list" => {&__MODULE__.cmd_list/1, "List commands"},
+    "serve" => {&__MODULE__.cmd_serve/1, "Serve the application"},
+    "migrate" => {&__MODULE__.cmd_migrate/1, "Run migrations"},
+    "migrate:rollback" => {&__MODULE__.cmd_rollback/1, "Rollback migrations"},
+    "migrate:refresh" => {&__MODULE__.cmd_refresh/1, "Refresh migrations"},
+    "migrate:status" => {&__MODULE__.cmd_status/1, "Show migration status"},
+    "db:seed" => {&__MODULE__.cmd_seed/1, "Seed the database"},
+    "route:list" => {&__MODULE__.cmd_routes/1, "List routes"},
+    "config:cache" => {&__MODULE__.cmd_config_cache/1, "Cache configuration"},
+    "view:cache" => {&__MODULE__.cmd_view_cache/1, "Cache views"},
+    "queue:work" => {&__MODULE__.cmd_queue_work/1, "Process queue jobs"},
+    "schedule:run" => {&__MODULE__.cmd_schedule/1, "Run due scheduled tasks"},
+    "tinker" => {&__MODULE__.cmd_tinker/1, "Interact with the application"},
+    "storage:link" => {&__MODULE__.cmd_storage_link/1, "Link public storage"},
+    "test" => {&__MODULE__.cmd_test/1, "Run the test suite"},
+    "make:model" => {&__MODULE__.cmd_make_model/1, "Create a new model class"},
+    "make:controller" => {&__MODULE__.cmd_make_controller/1, "Create a controller"},
+    "make:migration" => {&__MODULE__.cmd_make_migration/1, "Create a migration"},
+    "make:job" => {&__MODULE__.cmd_make_job/1, "Create a job"},
+    "make:event" => {&__MODULE__.cmd_make_event/1, "Create an event"},
+    "make:listener" => {&__MODULE__.cmd_make_listener/1, "Create a listener"},
+    "make:mail" => {&__MODULE__.cmd_make_mail/1, "Create a mailable"},
+    "make:notification" => {&__MODULE__.cmd_make_notification/1, "Create a notification"},
+    "make:policy" => {&__MODULE__.cmd_make_policy/1, "Create a policy"},
+    "make:request" => {&__MODULE__.cmd_make_request/1, "Create a form request"},
+    "make:rule" => {&__MODULE__.cmd_make_rule/1, "Create a validation rule"},
+    "make:provider" => {&__MODULE__.cmd_make_provider/1, "Create a provider"},
+    "make:command" => {&__MODULE__.cmd_make_command/1, "Create a command"},
+    "make:middleware" => {&__MODULE__.cmd_make_middleware/1, "Create middleware"},
+    "make:factory" => {&__MODULE__.cmd_make_factory/1, "Create a factory"},
+    "make:seeder" => {&__MODULE__.cmd_make_seeder/1, "Create a seeder"},
+    "install:api" => {&__MODULE__.cmd_install_api/1, "Install API routes and tokens"},
+    "install:broadcasting" => {&__MODULE__.cmd_install_broadcasting/1, "Install broadcasting"},
+    "install:starter-kit" => {&__MODULE__.cmd_install_starter/1, "Install auth starter kit"}
+  }
 
   def main(argv) do
-    # Ensure application is started / booted
     Application.ensure_all_started(:laravex)
     Laravex.Foundation.Server.boot!()
 
     case argv do
-      ["inspire" | _] ->
-        Laravex.Console.Router.dispatch("inspire")
+      [] ->
+        cmd_list([])
+
+      ["list" | _] ->
+        cmd_list([])
 
       [command | args] ->
-        case Laravex.Console.Router.dispatch(command, args) do
-          :ok -> :ok
-          :not_found ->
-            IO.puts(:stderr, "Command not found: #{command}")
-            System.halt(1)
+        case Map.get(@commands, command) do
+          {fun, _} ->
+            fun.(args)
+
+          nil ->
+            case Laravex.Console.Router.dispatch(command, args) do
+              :ok -> :ok
+              :not_found ->
+                IO.puts(:stderr, "Command not found: #{command}")
+                System.halt(1)
+            end
         end
-
-      [] ->
-        IO.puts("""
-        Laravex Artisan
-
-        Available commands:
-          inspire    Display an inspiring quote
-        """)
     end
   end
+
+  def commands, do: @commands
+
+  def cmd_inspire(_), do: IO.puts(Laravex.Support.Inspiring.quote_text())
+
+  def cmd_list(_) do
+    IO.puts("Laravex Artisan\n")
+
+    @commands
+    |> Enum.sort_by(fn {name, _} -> name end)
+    |> Enum.each(fn {name, {_, desc}} ->
+      IO.puts("  #{String.pad_trailing(name, 24)} #{desc}")
+    end)
+  end
+
+  def cmd_serve(args) do
+    port =
+      case args do
+        ["--port=" <> p | _] -> String.to_integer(p)
+        [p | _] -> String.to_integer(p)
+        _ -> Application.get_env(:laravex, :http_port, 8000)
+      end
+
+    {:ok, _pid, actual} = Laravex.Http.Server.start_link(port: port)
+    IO.puts("Laravex development server started: http://127.0.0.1:#{actual}")
+    Process.sleep(:infinity)
+  end
+
+  def cmd_migrate(_), do: (Laravex.Database.Migrator.migrate(); :ok)
+  def cmd_rollback(_), do: (Laravex.Database.Migrator.rollback(); :ok)
+  def cmd_refresh(_), do: (Laravex.Database.Migrator.refresh(); :ok)
+
+  def cmd_status(_) do
+    Laravex.Database.Migrator.status()
+    |> Enum.each(fn %{migration: m, status: s} -> IO.puts("#{String.pad_trailing(s, 10)} #{m}") end)
+  end
+
+  def cmd_seed(_), do: (Database.Seeders.DatabaseSeeder.run(); IO.puts("Database seeded."); :ok)
+
+  def cmd_routes(_) do
+    Laravex.Routing.Router.routes()
+    |> Enum.each(fn r ->
+      IO.puts("#{String.pad_trailing(r.method, 7)} #{String.pad_trailing(r.uri, 40)} #{r.name}")
+    end)
+  end
+
+  def cmd_config_cache(_) do
+    path = Path.join(Laravex.Foundation.Application.base_path(), "bootstrap/cache/config.term")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, :erlang.term_to_binary(Laravex.Config.Repository.all()))
+    IO.puts("Configuration cached.")
+  end
+
+  def cmd_view_cache(_) do
+    dir = Path.join(Laravex.Foundation.Application.base_path(), "storage/framework/views")
+    File.mkdir_p!(dir)
+    IO.puts("Views cached.")
+  end
+
+  def cmd_queue_work(args) do
+    once = "--once" in args
+    Laravex.Queue.Worker.work(once: once)
+  end
+
+  def cmd_schedule(_), do: Laravex.Console.Schedule.run()
+
+  def cmd_tinker(_) do
+    IO.puts("Laravex Tinker (type Expr, Controllerc to exit)")
+    tinker_loop()
+  end
+
+  def cmd_storage_link(_), do: (Laravex.Filesystem.Storage.link(); IO.puts("The links have been created."))
+  def cmd_test(_), do: Mix.Task.run("test")
+
+  def cmd_make_model([name | rest]) do
+    Laravex.Generators.make_model(name, rest)
+  end
+
+  def cmd_make_model(_), do: usage("make:model", "Name")
+
+  def cmd_make_controller([name | _]), do: Laravex.Generators.make_controller(name)
+  def cmd_make_controller(_), do: usage("make:controller", "Name")
+  def cmd_make_migration([name | _]), do: Laravex.Generators.make_migration(name)
+  def cmd_make_migration(_), do: usage("make:migration", "name")
+  def cmd_make_job([name | _]), do: Laravex.Generators.stub("Jobs", name, job_stub(name))
+  def cmd_make_job(_), do: usage("make:job", "Name")
+  def cmd_make_event([name | _]), do: Laravex.Generators.stub("Events", name, event_stub(name))
+  def cmd_make_event(_), do: usage("make:event", "Name")
+  def cmd_make_listener([name | _]), do: Laravex.Generators.stub("Listeners", name, listener_stub(name))
+  def cmd_make_listener(_), do: usage("make:listener", "Name")
+  def cmd_make_mail([name | _]), do: Laravex.Generators.stub("Mail", name, mail_stub(name))
+  def cmd_make_mail(_), do: usage("make:mail", "Name")
+  def cmd_make_notification([name | _]), do: Laravex.Generators.stub("Notifications", name, notification_stub(name))
+  def cmd_make_notification(_), do: usage("make:notification", "Name")
+  def cmd_make_policy([name | _]), do: Laravex.Generators.stub("Policies", name, policy_stub(name))
+  def cmd_make_policy(_), do: usage("make:policy", "Name")
+  def cmd_make_request([name | _]), do: Laravex.Generators.stub("Http/Requests", name, request_stub(name))
+  def cmd_make_request(_), do: usage("make:request", "Name")
+  def cmd_make_rule([name | _]), do: Laravex.Generators.stub("Rules", name, rule_stub(name))
+  def cmd_make_rule(_), do: usage("make:rule", "Name")
+  def cmd_make_provider([name | _]), do: Laravex.Generators.stub("Providers", name, provider_stub(name))
+  def cmd_make_provider(_), do: usage("make:provider", "Name")
+  def cmd_make_command([name | _]), do: Laravex.Generators.make_command(name)
+  def cmd_make_command(_), do: usage("make:command", "Name")
+  def cmd_make_middleware([name | _]), do: Laravex.Generators.stub("Http/Middleware", name, middleware_stub(name))
+  def cmd_make_middleware(_), do: usage("make:middleware", "Name")
+  def cmd_make_factory([name | _]), do: Laravex.Generators.make_factory(name)
+  def cmd_make_factory(_), do: usage("make:factory", "Name")
+  def cmd_make_seeder([name | _]), do: Laravex.Generators.make_seeder(name)
+  def cmd_make_seeder(_), do: usage("make:seeder", "Name")
+
+  def cmd_install_api(_), do: Laravex.Install.api()
+  def cmd_install_broadcasting(_), do: Laravex.Install.broadcasting()
+  def cmd_install_starter(_), do: Laravex.Install.starter_kit()
+
+  defp usage(cmd, arg), do: IO.puts("Usage: artisan #{cmd} #{arg}")
+
+  defp tinker_loop do
+    case IO.gets(">>> ") do
+      :eof -> :ok
+      {:error, _} -> :ok
+      line ->
+        line = String.trim(line)
+
+        cond do
+          line in ["exit", "quit", ""] -> :ok
+          true ->
+            try do
+              {result, _} = Code.eval_string(line, [], modules: :erlang.loaded())
+              IO.inspect(result)
+            rescue
+              e -> IO.puts(:stderr, Exception.message(e))
+            end
+
+            tinker_loop()
+        end
+    end
+  end
+
+  defp job_stub(name), do: """
+  defmodule App.Jobs.#{name} do
+    use Laravex.Queue.Job
+    def handle(args), do: {:ok, args}
+  end
+  """
+
+  defp event_stub(name), do: """
+  defmodule App.Events.#{name} do
+    defstruct [:payload]
+  end
+  """
+
+  defp listener_stub(name), do: """
+  defmodule App.Listeners.#{name} do
+    def handle(event), do: :ok
+  end
+  """
+
+  defp mail_stub(name), do: """
+  defmodule App.Mail.#{name} do
+    use Laravex.Mail.Mailable
+    def to, do: "user@example.com"
+    def subject, do: "#{name}"
+    def content, do: "Hello"
+  end
+  """
+
+  defp notification_stub(name), do: """
+  defmodule App.Notifications.#{name} do
+    def via(_), do: [:mail, :log]
+    def to_mail(user), do: %{to: user.email, subject: "#{name}", body: "Hi"}
+  end
+  """
+
+  defp policy_stub(name), do: """
+  defmodule App.Policies.#{name} do
+    def view?(_user, _model), do: true
+  end
+  """
+
+  defp request_stub(name), do: """
+  defmodule App.Http.Requests.#{name} do
+    use Laravex.Http.FormRequest
+    def rules, do: %{"name" => "required|string"}
+  end
+  """
+
+  defp rule_stub(name), do: """
+  defmodule App.Rules.#{name} do
+    def passes?(_attribute, _value), do: true
+    def message, do: "validation failed"
+  end
+  """
+
+  defp provider_stub(name), do: """
+  defmodule App.Providers.#{name} do
+    def register, do: :ok
+    def boot, do: :ok
+  end
+  """
+
+  defp middleware_stub(name), do: """
+  defmodule App.Http.Middleware.#{name} do
+    def handle(request, _opts), do: {:ok, request}
+  end
+  """
 end

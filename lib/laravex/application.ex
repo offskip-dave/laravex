@@ -7,6 +7,10 @@ defmodule Laravex.Application do
     base_path = File.cwd!()
 
     children = [
+      Laravex.Container,
+      Laravex.Cache.Manager,
+      Laravex.Queue.Worker,
+      Laravex.Events.Dispatcher,
       {Laravex.Foundation.Server, base_path: base_path}
     ]
 

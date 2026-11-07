@@ -2,19 +2,33 @@ defmodule Laravex.Http.Kernel do
   @moduledoc false
 
   def handle(%Laravex.Http.Request{} = request, app) do
-    {:ok, request} = Laravex.Http.Middleware.run_web(request, app.middleware)
-
-    case Laravex.Routing.Router.dispatch(request) do
-      {:ok, %Laravex.Http.Response{} = response} ->
+    case Laravex.Http.Middleware.run_web(request, app.middleware) do
+      {:halt, %Laravex.Http.Response{} = response} ->
         response
 
-      {:ok, body} when is_binary(body) ->
-        Laravex.Http.Response.html(body)
+      {:ok, request} ->
+        case Laravex.Routing.Router.dispatch(request) do
+          {:ok, %Laravex.Http.Response{} = response} ->
+            maybe_persist_session(request, response)
 
-      :error ->
-        Laravex.Http.Response.new(404, "Not Found", [
-          {"content-type", "text/plain; charset=utf-8"}
-        ])
+          {:ok, body} when is_binary(body) ->
+            maybe_persist_session(request, Laravex.Http.Response.html(body))
+
+          :error ->
+            Laravex.Http.Response.html(
+              "<!DOCTYPE html><html><body><h1>404</h1><p>Not Found</p></body></html>",
+              404
+            )
+        end
     end
   end
+
+  defp maybe_persist_session(%{session_id: sid, session: session}, response)
+       when is_binary(sid) do
+    Laravex.Session.Store.save(sid, session)
+    name = Laravex.Config.Repository.get("session.cookie", "laravex-session")
+    Laravex.Http.Response.with_cookie(response, name, sid)
+  end
+
+  defp maybe_persist_session(_request, response), do: response
 end

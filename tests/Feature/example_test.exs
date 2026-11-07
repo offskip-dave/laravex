@@ -1,13 +1,10 @@
 defmodule Tests.Feature.ExampleTest do
-  @moduledoc """
-  Port of tests/Feature/ExampleTest.php
-  """
-
   use Laravex.TestCase, async: false
 
   test "the application returns a successful response" do
     response = get("/")
     assert_status(response, 200)
+    assert_see(response, "Laravex")
   end
 
   test "the health endpoint is up" do
