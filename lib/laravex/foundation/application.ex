@@ -67,6 +67,10 @@ defmodule Laravex.Foundation.Application do
       end)
     end
 
+    Laravex.Routing.Router.get("/health", fn _req ->
+      Laravex.Foundation.Health.check()
+    end)
+
     if app.web_routes && Code.ensure_loaded?(Routes.Web) do
       Routes.Web.register()
     end

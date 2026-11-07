@@ -32,13 +32,13 @@ mix test
 
 | Layer | Capabilities |
 |---|---|
-| Foundation | Container, HTTP/router (params, groups, resources/apiResource), middleware (session/CSRF/bindings/auth/guest/can/throttle/signed), exceptions, logging |
-| Database | SQLite via `sqlite3` CLI, Schema/Blueprint, dynamic migrations, query builder, **Eloquex** ORM (relations, pagination, soft deletes, scopes, factories) |
+| Foundation | Container, HTTP/router, terminable middleware, cookie encrypt, `/up` + `/health`, exceptions, logging |
+| Database | SQLite, Schema/Blueprint, migrations, query builder, **Eloquex** (fillable/guarded, touch, relations, scopes, factories) |
 | Auth web loop | Session, CSRF, flash, guard, policies/gates, password broker/reset, validation depth, Crypt, signed URLs, DB API tokens |
 | DX | `make:*`, migrate/fresh/wipe/seed, config/view cache+clear, route:list, serve, tinker, Str/Arr, Collection, `AGENTS.md` |
 | Services | Cache, queue (sync/database/deferred, ShouldQueue), mail, notifications, logging, filesystem, named rate limiters |
 | HTTP | Static files, multipart uploads, JsonResource + paginator links, OTP `:json` |
-| Views | Blade `{{ }}`, `old()`, `@csrf`/`@method`, `@if`/`@else`/`@unless`/`@forelse`, `@include`, `@foreach`, `@error`/`@session`, `@auth`/`@can`, components/stacks |
+| Views | Blade `{{ }}`, `old()`, `@lang`/`__()`, `@csrf`/`@method`, `@if`/`@else`/`@unless`/`@forelse`, `@include`, `@foreach`, `@error`/`@session`, `@auth`/`@can`, components/stacks |
 | Async | Events/listeners, notifications, schedule (cron/`hourly`/`daily`), broadcasting bus |
 | Ecosystem | `install:api` (tokens), `install:broadcasting`, `install:starter-kit`, observability recorder |
 

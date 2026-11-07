@@ -30,6 +30,7 @@ defmodule Laravex.View do
     |> replace_vite()
     |> replace_csrf(assigns)
     |> replace_method()
+    |> replace_lang()
     |> replace_push()
     |> replace_auth_directives(assigns)
     |> replace_forelse(assigns)
@@ -196,6 +197,20 @@ defmodule Laravex.View do
   defp replace_method(contents) do
     Regex.replace(~r/@method\(['"]([^'"]+)['"]\)/, contents, fn _, method ->
       ~s(<input type="hidden" name="_method" value="#{String.upcase(method)}">)
+    end)
+  end
+
+  defp replace_lang(contents) do
+    contents
+    |> then(fn html ->
+      Regex.replace(~r/@lang\(['"]([^'"]+)['"]\)/, html, fn _, key ->
+        Laravex.Translation.get(key) |> html_escape()
+      end)
+    end)
+    |> then(fn html ->
+      Regex.replace(~r/\{\{\s*__\(['"]([^'"]+)['"]\)\s*\}\}/, html, fn _, key ->
+        Laravex.Translation.get(key) |> html_escape()
+      end)
     end)
   end
 

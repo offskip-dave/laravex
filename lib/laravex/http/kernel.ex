@@ -11,7 +11,7 @@ defmodule Laravex.Http.Kernel do
 
         case Laravex.Http.Middleware.run(request, plugs) do
           {:halt, %Laravex.Http.Response{} = response} ->
-            response
+            terminate(plugs, request, response)
 
           {:ok, request} ->
             request =
@@ -19,27 +19,65 @@ defmodule Laravex.Http.Kernel do
 
             Process.put(:laravex_request, request)
 
-            case Laravex.Routing.Router.invoke(handler, request, opts) do
-              %Laravex.Http.Response{} = response ->
-                persist_session(Process.get(:laravex_request, request), response)
+            response =
+              case Laravex.Routing.Router.invoke(handler, request, opts) do
+                %Laravex.Http.Response{} = response ->
+                  persist_session(Process.get(:laravex_request, request), response)
 
-              body when is_binary(body) ->
-                persist_session(Process.get(:laravex_request, request), Laravex.Http.Response.html(body))
+                body when is_binary(body) ->
+                  persist_session(
+                    Process.get(:laravex_request, request),
+                    Laravex.Http.Response.html(body)
+                  )
 
-              other ->
-                persist_session(Process.get(:laravex_request, request), Laravex.Http.Response.html(inspect(other)))
-            end
+                other ->
+                  persist_session(
+                    Process.get(:laravex_request, request),
+                    Laravex.Http.Response.html(inspect(other))
+                  )
+              end
+
+            terminate(plugs, Process.get(:laravex_request, request), response)
         end
     end
   end
 
-  def persist_session(%{session_id: sid, session: session}, response) when is_binary(sid) do
+  def persist_session(%{session_id: sid, session: session}, response)
+      when is_binary(sid) do
     Laravex.Session.Store.save(sid, session)
     name = Laravex.Config.Repository.get("session.cookie", "laravex-session")
-    Laravex.Http.Response.with_cookie(response, name, sid)
+    encrypt? = truthy?(Laravex.Config.Repository.get("session.encrypt", false))
+    value = if encrypt?, do: Laravex.Encryption.Crypt.encrypt(sid), else: sid
+
+    Laravex.Http.Response.with_cookie(response, name, value,
+      path: Laravex.Config.Repository.get("session.path", "/"),
+      http_only: truthy?(Laravex.Config.Repository.get("session.http_only", true))
+    )
   end
 
   def persist_session(_request, response), do: response
+
+  defp terminate(plugs, request, response) do
+    plugs
+    |> Enum.reverse()
+    |> Enum.reduce(response, fn plug, resp ->
+      mod = plug_mod(plug)
+
+      if function_exported?(mod, :terminate, 2) do
+        case mod.terminate(request, resp) do
+          %Laravex.Http.Response{} = next -> next
+          {:ok, %Laravex.Http.Response{} = next} -> next
+          _ -> resp
+        end
+      else
+        resp
+      end
+    end)
+  end
+
+  defp plug_mod({mod, _opts}) when is_atom(mod), do: mod
+  defp plug_mod(mod) when is_atom(mod), do: mod
+  defp plug_mod(_), do: __MODULE__
 
   defp resolve_plugs(middleware, opts) do
     groups = Keyword.get(opts, :middleware, ["web"])
@@ -62,4 +100,6 @@ defmodule Laravex.Http.Kernel do
       404
     )
   end
+
+  defp truthy?(v), do: v in [true, "true", 1, "1"]
 end

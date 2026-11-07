@@ -109,12 +109,17 @@ defmodule Laravex.Http.Middleware do
 end
 
 defmodule Laravex.Http.Middleware.EncryptCookies do
-  @moduledoc "Marks cookies as encrypted (values sealed with Crypt when APP_KEY is set)."
+  @moduledoc """
+  Decrypt inbound cookies when `session.encrypt` is true (or value looks sealed).
+  Encrypt outbound Set-Cookie values in `terminate/2`.
+  """
 
   def handle(request, _opts) do
+    encrypt? = truthy?(Laravex.Config.Repository.get("session.encrypt", false))
+
     sealed =
       Map.new(request.cookies, fn {k, v} ->
-        if String.starts_with?(to_string(v), "eyJpdiI") or String.contains?(to_string(v), ":") do
+        if encrypt? or looks_encrypted?(v) do
           {k, try_decrypt(v)}
         else
           {k, v}
@@ -124,11 +129,49 @@ defmodule Laravex.Http.Middleware.EncryptCookies do
     {:ok, %{request | cookies: sealed}}
   end
 
+  def terminate(_request, %Laravex.Http.Response{} = response) do
+    if truthy?(Laravex.Config.Repository.get("session.encrypt", false)) do
+      cookies =
+        Enum.map(response.cookies, fn cookie ->
+          case String.split(cookie, "=", parts: 2) do
+            [name, rest] ->
+              {value, attrs} =
+                case String.split(rest, ";", parts: 2) do
+                  [v, a] -> {URI.decode(String.trim(v)), a}
+                  [v] -> {URI.decode(String.trim(v)), nil}
+                end
+
+              if looks_encrypted?(value) do
+                cookie
+              else
+                sealed = Laravex.Encryption.Crypt.encrypt(value)
+                if attrs, do: "#{name}=#{URI.encode(sealed)};#{attrs}", else: "#{name}=#{URI.encode(sealed)}"
+              end
+
+            _ ->
+              cookie
+          end
+        end)
+
+      %{response | cookies: cookies}
+    else
+      response
+    end
+  end
+
+  defp looks_encrypted?(v) do
+    s = to_string(v)
+    # AES-GCM payloads from Crypt are base64 (often start with iv+tag bytes → varied)
+    byte_size(s) > 40 and match?({:ok, _}, Base.decode64(s))
+  end
+
   defp try_decrypt(v) do
     Laravex.Encryption.Crypt.decrypt(v)
   rescue
     _ -> v
   end
+
+  defp truthy?(v), do: v in [true, "true", 1, "1"]
 end
 
 defmodule Laravex.Http.Middleware.ShareErrors do

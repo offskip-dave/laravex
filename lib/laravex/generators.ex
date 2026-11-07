@@ -9,7 +9,10 @@ defmodule Laravex.Generators do
       defstruct [:id, :created_at, :updated_at]
       use Laravex.Eloquex.Model, table: "#{table}"
       def fillable, do: []
+      def guarded, do: ["*"]
       def casts, do: %{}
+      def appends, do: []
+      def touches, do: []
     end
     """)
 

@@ -232,8 +232,19 @@ defmodule Laravex.Console.Kernel do
 
   defp job_stub(name), do: """
   defmodule App.Jobs.#{name} do
-    use Laravex.Queue.Job
-    def handle(args), do: {:ok, args}
+    @moduledoc \"\"\"
+    Queued job. Use `queue: false` for sync-only jobs.
+
+        App.Jobs.#{name}.dispatch([arg])
+        App.Jobs.#{name}.dispatch_sync([arg])
+        App.Jobs.#{name}.dispatch([arg], connection: "deferred", delay: 10)
+    \"\"\"
+
+    use Laravex.Queue.Job, queue: true
+
+    def handle(args) do
+      {:ok, args}
+    end
   end
   """
 

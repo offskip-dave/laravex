@@ -102,7 +102,9 @@ defmodule Laravex.Database.Model do
         |> Laravex.Database.Query.where("id", id)
         |> Laravex.Database.Query.update(attrs)
 
-        find(id, with_trashed: true)
+        saved = find(id, with_trashed: true)
+        if saved, do: Laravex.Database.Model.touch_parents(saved), else: saved
+        saved
       end
 
       def delete(%__MODULE__{id: id} = model) do
@@ -182,6 +184,10 @@ defmodule Laravex.Database.Model do
 
       def to_map(%__MODULE__{} = model) do
         Laravex.Database.Model.to_map(model)
+      end
+
+      def touch(%__MODULE__{} = model, attr \\ "updated_at") do
+        Laravex.Database.Model.touch(model, attr)
       end
 
       defoverridable new: 0, new: 1, find_by_email: 1
@@ -317,15 +323,59 @@ defmodule Laravex.Database.Model do
 
   def get_attribute(model, key) do
     key_atom = String.to_atom(to_string(key))
-    value = Map.get(model, key_atom)
     mod = model.__struct__
     accessor = :"get_#{key_atom}_attribute"
 
-    if function_exported?(mod, accessor, 1) do
-      apply(mod, accessor, [value])
-    else
-      value
+    cond do
+      function_exported?(mod, accessor, 1) ->
+        value = if Map.has_key?(model, key_atom), do: Map.get(model, key_atom), else: nil
+        apply(mod, accessor, [value])
+
+      Map.has_key?(model, key_atom) ->
+        Map.get(model, key_atom)
+
+      true ->
+        nil
     end
+  end
+
+  def touch(model, attr \\ "updated_at")
+
+  def touch(%{id: nil} = model, _attr), do: model
+
+  def touch(%{__struct__: mod, id: id} = model, attr) do
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+    attr = to_string(attr)
+
+    Laravex.Database.Query.table(mod.table_name())
+    |> Laravex.Database.Query.where("id", id)
+    |> Laravex.Database.Query.update(%{attr => now, "updated_at" => now})
+
+    touched = Map.put(model, String.to_atom(attr), now) |> Map.put(:updated_at, now)
+    sync_original(touched)
+    touch_parents(touched)
+    touched
+  end
+
+  def touch_parents(model) do
+    mod = model.__struct__
+
+    if function_exported?(mod, :touches, 0) do
+      Enum.each(List.wrap(mod.touches()), fn name ->
+        case Laravex.Eloquex.Relation.for(model, name) do
+          %Laravex.Eloquex.Relation.BelongsTo{} = rel ->
+            case Laravex.Eloquex.Relation.BelongsTo.get(rel) do
+              %{id: _} = parent -> touch(parent)
+              _ -> :ok
+            end
+
+          _ ->
+            :ok
+        end
+      end)
+    end
+
+    model
   end
 
   def apply_mutators(mod, attrs) when is_map(attrs) do
@@ -366,18 +416,35 @@ defmodule Laravex.Database.Model do
     Map.new(map, fn {k, v} -> {String.to_atom(to_string(k)), v} end)
   end
 
+  @system_attrs ~w(id created_at updated_at email_verified_at remember_token deleted_at)
+
   def cast_attrs(mod, attrs) do
     casts = if function_exported?(mod, :casts, 0), do: mod.casts(), else: %{}
-    fillable = if function_exported?(mod, :fillable, 0), do: mod.fillable(), else: Map.keys(attrs)
+    attrs = Enum.filter(attrs, fn {k, _} -> fillable?(mod, k) end)
 
-    attrs
-    |> Enum.filter(fn {k, _} ->
-      k in fillable or
-        k in ["id", "created_at", "updated_at", "email_verified_at", "remember_token", "deleted_at"]
-    end)
-    |> Map.new(fn {k, v} ->
+    Map.new(attrs, fn {k, v} ->
       {k, cast_one(Map.get(casts, k), v)}
     end)
+  end
+
+  def fillable?(mod, key) do
+    key = to_string(key)
+
+    cond do
+      key in @system_attrs ->
+        true
+
+      function_exported?(mod, :fillable, 0) ->
+        key in Enum.map(mod.fillable(), &to_string/1)
+
+      function_exported?(mod, :guarded, 0) ->
+        guarded = Enum.map(mod.guarded(), &to_string/1)
+        "*" not in guarded and key not in guarded
+
+      true ->
+        # Eloquex default: unguarded mass assignment when neither fillable nor guarded
+        true
+    end
   end
 
   defp cast_one(:hashed, v) when is_binary(v) do
