@@ -39,8 +39,11 @@ defmodule Laravex.Session.Store do
     put(request, "_flash." <> to_string(key), value)
   end
 
-  def regenerate(%{session_id: _old} = request) do
+  def regenerate(%{session_id: old, session: session} = request) do
     new_id = Laravex.Support.Helpers.str_random(40)
+    # Carry session data to the new id
+    save(new_id, session)
+    if is_binary(old), do: delete(old)
     %{request | session_id: new_id}
   end
 
@@ -48,6 +51,14 @@ defmodule Laravex.Session.Store do
     ensure()
     :ets.insert(@table, {sid, session})
     persist_file(sid, session)
+    :ok
+  end
+
+  def delete(sid) when is_binary(sid) do
+    ensure()
+    :ets.delete(@table, sid)
+    path = Path.join(Laravex.Foundation.Application.base_path(), "storage/framework/sessions/#{sid}")
+    if File.exists?(path), do: File.rm(path)
     :ok
   end
 
@@ -69,6 +80,8 @@ defmodule Laravex.Session.Store do
         end
     end
   end
+
+  def cookie_name, do: Laravex.Config.Repository.get("session.cookie", "laravex-session")
 
   defp persist_file(sid, session) do
     dir = Path.join(Laravex.Foundation.Application.base_path(), "storage/framework/sessions")
@@ -96,8 +109,6 @@ end
 defmodule Laravex.Http.Middleware.VerifyCsrfToken do
   @moduledoc "CSRF verification for state-changing requests."
 
-  @except ["/", "/up"]
-
   def handle(%{method: method} = request, _opts) when method in ["GET", "HEAD", "OPTIONS"] do
     token = Map.get(request.session, "_token") || Laravex.Support.Helpers.str_random(40)
     request = Laravex.Session.Store.put(request, "_token", token)
@@ -105,10 +116,13 @@ defmodule Laravex.Http.Middleware.VerifyCsrfToken do
   end
 
   def handle(request, _opts) do
-    if request.path in @except do
+    except = csrf_except()
+
+    if request.path in except do
       {:ok, request}
     else
       session_token = Map.get(request.session, "_token")
+
       request_token =
         Laravex.Http.Request.input(request, "_token") ||
           Laravex.Http.Request.header(request, "x-csrf-token") ||
@@ -120,6 +134,11 @@ defmodule Laravex.Http.Middleware.VerifyCsrfToken do
         {:halt, Laravex.Http.Response.html("CSRF token mismatch.", 419)}
       end
     end
+  end
+
+  defp csrf_except do
+    configured = Application.get_env(:laravex, :csrf_except, [])
+    ["/", "/up"] ++ List.wrap(configured)
   end
 
   defp secure_compare(a, b) do

@@ -15,7 +15,8 @@ defmodule Laravex.Http.Middleware do
                 Laravex.Http.Middleware.SubstituteBindings
               ]
             },
-            aliases: %{}
+            aliases: %{},
+            csrf_except: []
 
   def new, do: %__MODULE__{}
 

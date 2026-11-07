@@ -2,9 +2,9 @@ defmodule Tests.Unit.ConfigAndDatabaseTest do
   use Laravex.TestCase, async: false
 
   test "all default config files load" do
-    Enum.each(Laravex.Config.Repository.files(), fn name ->
+    for name <- ~w(app auth cache database filesystems logging mail queue services session) do
       assert Map.has_key?(Laravex.Config.Repository.all(), name), "missing config #{name}"
-    end)
+    end
 
     assert Laravex.Config.Repository.get("auth.providers.users.model") == App.Models.User
     assert Laravex.Config.Repository.get("app.name") != nil

@@ -67,13 +67,25 @@ defmodule Laravex.Queue.Worker do
 
     try do
       {:ok, data} = Laravex.Support.JSON.decode(payload)
-      job_mod = String.to_existing_atom(data["job"])
+      job_mod = resolve_job_module(data["job"])
       args = data["args"] || []
       job_mod.handle(args)
       Laravex.Database.Connection.execute("DELETE FROM jobs WHERE id = ?", [id])
     rescue
       e ->
         fail(job, e)
+    end
+  end
+
+  defp resolve_job_module(name) when is_binary(name) do
+    mod = String.to_atom(name)
+
+    case Code.ensure_loaded(mod) do
+      {:module, ^mod} ->
+        mod
+
+      {:error, reason} ->
+        raise "Job module #{name} could not be loaded: #{inspect(reason)}"
     end
   end
 

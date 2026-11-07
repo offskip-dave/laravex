@@ -23,6 +23,7 @@ defmodule Laravex.Routing.Router do
   def put(path, handler, opts \\ []), do: add("PUT", path, handler, opts)
   def patch(path, handler, opts \\ []), do: add("PATCH", path, handler, opts)
   def delete(path, handler, opts \\ []), do: add("DELETE", path, handler, opts)
+
   def any(path, handler, opts \\ []) do
     Enum.each(~w(GET POST PUT PATCH DELETE), &add(&1, path, handler, opts))
   end
@@ -40,17 +41,35 @@ defmodule Laravex.Routing.Router do
     only = Keyword.get(opts, :only, [:index, :create, :store, :show, :edit, :update, :destroy])
     base = "/" <> String.trim(name, "/")
 
-    if :index in only, do: get(base, &controller_call(controller, :index, &1), name: "#{name}.index")
-    if :create in only, do: get(base <> "/create", &controller_call(controller, :create, &1), name: "#{name}.create")
-    if :store in only, do: post(base, &controller_call(controller, :store, &1), name: "#{name}.store")
-    if :show in only, do: get(base <> "/{id}", &controller_call(controller, :show, &1), name: "#{name}.show")
-    if :edit in only, do: get(base <> "/{id}/edit", &controller_call(controller, :edit, &1), name: "#{name}.edit")
-    if :update in only, do: put(base <> "/{id}", &controller_call(controller, :update, &1), name: "#{name}.update")
-    if :destroy in only, do: delete(base <> "/{id}", &controller_call(controller, :destroy, &1), name: "#{name}.destroy")
+    if :index in only,
+      do: get(base, &controller_call(controller, :index, &1), name: "#{name}.index")
+
+    if :create in only,
+      do: get(base <> "/create", &controller_call(controller, :create, &1), name: "#{name}.create")
+
+    if :store in only,
+      do: post(base, &controller_call(controller, :store, &1), name: "#{name}.store")
+
+    if :show in only,
+      do: get(base <> "/{id}", &controller_call(controller, :show, &1), name: "#{name}.show")
+
+    if :edit in only,
+      do: get(base <> "/{id}/edit", &controller_call(controller, :edit, &1), name: "#{name}.edit")
+
+    if :update in only,
+      do: put(base <> "/{id}", &controller_call(controller, :update, &1), name: "#{name}.update")
+
+    if :destroy in only,
+      do: delete(base <> "/{id}", &controller_call(controller, :destroy, &1), name: "#{name}.destroy")
+
     :ok
   end
 
-  def dispatch(%Laravex.Http.Request{method: method, path: path} = request) do
+  @doc """
+  Match a request to a route without invoking the handler.
+  Returns `{:ok, request, handler, opts}` or `:error`.
+  """
+  def match(%Laravex.Http.Request{method: method, path: path} = request) do
     ensure()
     path = normalize(path)
 
@@ -59,8 +78,13 @@ defmodule Laravex.Routing.Router do
       {{^method, pattern}, handler, opts} ->
         case match_path(pattern, path) do
           {:ok, route_params} ->
-            request = %{request | route_params: route_params, params: Map.merge(request.params, route_params)}
-            {:ok, invoke(handler, request, opts)}
+            request = %{
+              request
+              | route_params: route_params,
+                params: Map.merge(request.params, route_params)
+            }
+
+            {:ok, request, handler, opts}
 
           :error ->
             nil
@@ -73,6 +97,21 @@ defmodule Laravex.Routing.Router do
       nil -> :error
       other -> other
     end
+  end
+
+  def dispatch(%Laravex.Http.Request{} = request) do
+    case match(request) do
+      {:ok, request, handler, opts} -> {:ok, invoke(handler, request, opts)}
+      :error -> :error
+    end
+  end
+
+  def invoke(handler, request, _opts \\ [])
+
+  def invoke(handler, request, _opts) when is_function(handler, 1), do: handler.(request)
+
+  def invoke({mod, fun}, request, _opts) when is_atom(mod) and is_atom(fun) do
+    apply(mod, fun, [request])
   end
 
   def url(name, params \\ %{}) do
@@ -90,15 +129,27 @@ defmodule Laravex.Routing.Router do
 
     :ets.tab2list(@table)
     |> Enum.map(fn {{method, pattern}, _handler, opts} ->
-      %{method: method, uri: pattern, name: Keyword.get(opts, :name), middleware: Keyword.get(opts, :middleware, [])}
+      %{
+        method: method,
+        uri: pattern,
+        name: Keyword.get(opts, :name),
+        middleware: Keyword.get(opts, :middleware, ["web"])
+      }
     end)
   end
 
   defp add(method, path, handler, opts) do
     ensure()
     [{:group_stack, stack}] = :ets.lookup(@meta, :group_stack)
-    group_opts = Enum.reduce(Enum.reverse(stack), [], fn g, acc -> Keyword.merge(acc, Enum.to_list(g)) end)
-    opts = Keyword.merge(group_opts, opts)
+
+    group_opts =
+      Enum.reduce(Enum.reverse(stack), [], fn g, acc -> Keyword.merge(acc, Enum.to_list(g)) end)
+
+    opts =
+      group_opts
+      |> Keyword.merge(opts)
+      |> Keyword.put_new(:middleware, ["web"])
+
     prefix = Keyword.get(opts, :prefix, "")
     full = normalize(Path.join(["/", prefix, path]) |> String.replace("//", "/"))
 
@@ -110,12 +161,6 @@ defmodule Laravex.Routing.Router do
     end
 
     :ok
-  end
-
-  defp invoke(handler, request, _opts) when is_function(handler, 1), do: handler.(request)
-
-  defp invoke({mod, fun}, request, _opts) when is_atom(mod) and is_atom(fun) do
-    apply(mod, fun, [request])
   end
 
   defp controller_call(controller, action, request) do
@@ -147,7 +192,8 @@ defmodule Laravex.Routing.Router do
   end
 
   defp fill_pattern(pattern, params) do
-    Enum.reduce(Map.new(params, fn {k, v} -> {to_string(k), to_string(v)} end), pattern, fn {k, v}, acc ->
+    Enum.reduce(Map.new(params, fn {k, v} -> {to_string(k), to_string(v)} end), pattern, fn {k, v},
+                                                                                            acc ->
       String.replace(acc, "{#{k}}", v)
     end)
   end

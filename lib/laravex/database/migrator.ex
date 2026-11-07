@@ -1,5 +1,5 @@
 defmodule Laravex.Database.Migrator do
-  @moduledoc "Runs migration modules with a migrations repository table."
+  @moduledoc "Runs migration modules discovered from database/migrations/*.ex."
 
   def ensure_repository! do
     unless Laravex.Database.Schema.has_table?("migrations") do
@@ -23,10 +23,12 @@ defmodule Laravex.Database.Migrator do
     Enum.each(pending, fn {name, mod} ->
       IO.puts("Migrating: #{name}")
       mod.up()
+
       Laravex.Database.Connection.execute(
         "INSERT INTO migrations (migration, batch) VALUES (?, ?)",
         [name, batch]
       )
+
       IO.puts("Migrated:  #{name}")
     end)
 
@@ -49,7 +51,7 @@ defmodule Laravex.Database.Migrator do
       Enum.each(rows, fn %{"migration" => name} ->
         mod = module_for(name)
         IO.puts("Rolling back: #{name}")
-        if function_exported?(mod, :down, 0), do: mod.down()
+        if mod && function_exported?(mod, :down, 0), do: mod.down()
         Laravex.Database.Connection.execute("DELETE FROM migrations WHERE migration = ?", [name])
       end)
 
@@ -60,12 +62,10 @@ defmodule Laravex.Database.Migrator do
   def refresh do
     ensure_repository!()
 
-    Laravex.Database.Connection.query(
-      "SELECT migration FROM migrations ORDER BY id DESC"
-    )
+    Laravex.Database.Connection.query("SELECT migration FROM migrations ORDER BY id DESC")
     |> Enum.each(fn %{"migration" => name} ->
       mod = module_for(name)
-      if function_exported?(mod, :down, 0), do: mod.down()
+      if mod && function_exported?(mod, :down, 0), do: mod.down()
     end)
 
     Laravex.Database.Connection.execute("DELETE FROM migrations")
@@ -91,14 +91,10 @@ defmodule Laravex.Database.Migrator do
     |> Enum.map(& &1["name"])
   end
 
-  # Legacy API used by old migration modules that return operation lists
   def apply(operations) when is_list(operations) do
     Enum.each(operations, fn
-      {:create, name, columns} ->
-        create_from_ops(name, columns)
-
-      _ ->
-        :ok
+      {:create, name, columns} -> create_from_ops(name, columns)
+      _ -> :ok
     end)
 
     :ok
@@ -164,16 +160,47 @@ defmodule Laravex.Database.Migrator do
     end
   end
 
-  defp migration_files do
-    [
-      {"0001_01_01_000000_create_users_table", Database.Migrations.CreateUsersTable},
-      {"0001_01_01_000001_create_cache_table", Database.Migrations.CreateCacheTable},
-      {"0001_01_01_000002_create_jobs_table", Database.Migrations.CreateJobsTable}
-    ]
+  def migration_files do
+    dir = Path.join(Laravex.Foundation.Application.base_path(), "database/migrations")
+
+    dir
+    |> File.ls!()
+    |> Enum.filter(&String.ends_with?(&1, ".ex"))
+    |> Enum.sort()
+    |> Enum.map(fn file ->
+      path = Path.join(dir, file)
+      name = Path.rootname(file)
+      mod = module_from_file(path) || guess_module(name)
+      {name, mod}
+    end)
+    |> Enum.reject(fn {_name, mod} -> is_nil(mod) end)
   end
 
   defp module_for(name) do
-    migration_files()
-    |> Enum.find_value(fn {n, m} -> if n == name, do: m end)
+    Enum.find_value(migration_files(), fn {n, m} -> if n == name, do: m end)
+  end
+
+  defp module_from_file(path) do
+    contents = File.read!(path)
+
+    case Regex.run(~r/defmodule\s+([A-Za-z0-9\.]+)/, contents) do
+      [_, mod_name] ->
+        mod = Module.concat([mod_name])
+        Code.ensure_loaded?(mod)
+        mod
+
+      _ ->
+        nil
+    end
+  end
+
+  defp guess_module(name) do
+    # 0001_01_01_000000_create_users_table -> CreateUsersTable
+    suffix =
+      name
+      |> String.replace(~r/^\d{4}_\d{2}_\d{2}_\d+_/, "")
+      |> Macro.camelize()
+
+    Module.concat([Database.Migrations, suffix])
   end
 end

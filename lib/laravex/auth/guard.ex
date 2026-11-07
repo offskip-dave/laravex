@@ -36,17 +36,24 @@ defmodule Laravex.Auth.Guard do
 
   def user(%{user: %{} = user}), do: user
 
-  def user(%{session: session} = request) do
-    case Map.get(session, "login_web") do
-      nil ->
-        nil
+  def user(%{session: session}) do
+    case Process.get(:laravex_acting_as) do
+      %{id: _} = acting ->
+        acting
 
-      id ->
-        model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
-        user = model.find(id)
-        if user, do: %{request | user: user}.user, else: nil
+      _ ->
+        case Map.get(session, "login_web") do
+          nil ->
+            nil
+
+          id ->
+            model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
+            model.find(id)
+        end
     end
   end
+
+  def user(_), do: Process.get(:laravex_acting_as)
 
   def check?(request), do: user(request) != nil
 
