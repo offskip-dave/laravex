@@ -1,14 +1,16 @@
 defmodule Laravex.Database.Model do
   @moduledoc """
-  Eloquent-shaped ActiveRecord base with relations and pagination helpers.
-  Use with `use Laravex.Database.Model, table: "users"`.
+  Eloquent-shaped ActiveRecord base with relations, pagination, and soft deletes.
+  Use with `use Laravex.Database.Model, table: "users"` or `soft_deletes: true`.
   """
 
   defmacro __using__(opts) do
     table = Keyword.fetch!(opts, :table)
+    soft_deletes = Keyword.get(opts, :soft_deletes, false)
 
     quote do
       def table_name, do: unquote(table)
+      def soft_deletes?, do: unquote(soft_deletes)
 
       def new(attrs \\ %{}) when is_map(attrs) do
         attrs = Laravex.Database.Model.stringify(attrs)
@@ -16,14 +18,31 @@ defmodule Laravex.Database.Model do
         struct(__MODULE__, Laravex.Database.Model.atomize(casted))
       end
 
-      def query, do: Laravex.Database.Query.table(table_name())
+      def query(opts \\ []) do
+        q = Laravex.Database.Query.table(table_name())
 
-      def all do
-        query() |> Laravex.Database.Query.get() |> Enum.map(&from_row/1)
+        if unquote(soft_deletes) do
+          cond do
+            Keyword.get(opts, :with_trashed, false) ->
+              q
+
+            Keyword.get(opts, :only_trashed, false) ->
+              Laravex.Database.Query.where_not_null(q, "deleted_at")
+
+            true ->
+              Laravex.Database.Query.where_null(q, "deleted_at")
+          end
+        else
+          q
+        end
       end
 
-      def find(id) do
-        case query() |> Laravex.Database.Query.where("id", id) |> Laravex.Database.Query.first() do
+      def all(opts \\ []) do
+        query(opts) |> Laravex.Database.Query.get() |> Enum.map(&from_row/1)
+      end
+
+      def find(id, opts \\ []) do
+        case query(opts) |> Laravex.Database.Query.where("id", id) |> Laravex.Database.Query.first() do
           nil -> nil
           row -> from_row(row)
         end
@@ -42,6 +61,9 @@ defmodule Laravex.Database.Model do
         |> Laravex.Database.Query.get()
         |> Enum.map(&from_row/1)
       end
+
+      def with_trashed, do: all(with_trashed: true)
+      def only_trashed, do: all(only_trashed: true)
 
       def create(attrs) when is_map(attrs) do
         model = new(attrs)
@@ -75,16 +97,45 @@ defmodule Laravex.Database.Model do
           |> Map.new(fn {k, v} -> {to_string(k), v} end)
           |> Map.put("updated_at", now)
 
-        query()
+        Laravex.Database.Query.table(table_name())
         |> Laravex.Database.Query.where("id", id)
         |> Laravex.Database.Query.update(attrs)
 
-        find(id)
+        find(id, with_trashed: true)
       end
 
-      def delete(%__MODULE__{id: id}) do
-        query() |> Laravex.Database.Query.where("id", id) |> Laravex.Database.Query.delete()
+      def delete(%__MODULE__{id: id} = model) do
+        if unquote(soft_deletes) do
+          now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+          Laravex.Database.Query.table(table_name())
+          |> Laravex.Database.Query.where("id", id)
+          |> Laravex.Database.Query.update(%{"deleted_at" => now})
+
+          :ok
+        else
+          force_delete(model)
+        end
+      end
+
+      def force_delete(%__MODULE__{id: id}) do
+        Laravex.Database.Query.table(table_name())
+        |> Laravex.Database.Query.where("id", id)
+        |> Laravex.Database.Query.delete()
+
         :ok
+      end
+
+      def restore(%__MODULE__{id: id}) do
+        if unquote(soft_deletes) do
+          Laravex.Database.Query.table(table_name())
+          |> Laravex.Database.Query.where("id", id)
+          |> Laravex.Database.Query.update(%{"deleted_at" => nil})
+
+          find(id)
+        else
+          find(id)
+        end
       end
 
       def paginate(per_page \\ 15, page \\ 1) do
@@ -92,7 +143,9 @@ defmodule Laravex.Database.Model do
       end
 
       def has_many(name, related, foreign_key \\ nil) do
-        foreign_key = foreign_key || Macro.underscore(__MODULE__ |> Module.split() |> List.last()) <> "_id"
+        foreign_key =
+          foreign_key || Macro.underscore(__MODULE__ |> Module.split() |> List.last()) <> "_id"
+
         {:has_many, name, related, foreign_key}
       end
 
@@ -101,8 +154,13 @@ defmodule Laravex.Database.Model do
         {:belongs_to, name, related, foreign_key}
       end
 
-      def load(%__MODULE__{} = model, relation_name) when is_atom(relation_name) or is_binary(relation_name) do
+      def load(%__MODULE__{} = model, relation_name)
+          when is_atom(relation_name) or is_binary(relation_name) do
         Laravex.Database.Model.load_relation(model, __MODULE__, relation_name)
+      end
+
+      def with(models, relations) when is_list(models) do
+        Laravex.Database.Model.with_relations(models, __MODULE__, relations)
       end
 
       def from_row(row) when is_map(row) do
@@ -129,8 +187,16 @@ defmodule Laravex.Database.Model do
       total: total,
       per_page: per_page,
       current_page: page,
-      last_page: max(1, ceil(total / per_page))
+      last_page: max(1, ceil(total / max(per_page, 1)))
     }
+  end
+
+  def with_relations(models, owner_mod, relations) do
+    rels = List.wrap(relations)
+
+    Enum.map(models, fn model ->
+      Enum.reduce(rels, model, fn rel, acc -> load_relation(acc, owner_mod, rel) end)
+    end)
   end
 
   def load_relation(model, owner_mod, relation_name) do
@@ -152,7 +218,8 @@ defmodule Laravex.Database.Model do
         put_loaded(model, relation_name, rows)
 
       {:belongs_to, _name, related, fk} ->
-        fk_val = Map.get(model, String.to_atom(fk)) || Map.get(Map.from_struct(model), String.to_atom(fk))
+        fk_atom = String.to_atom(fk)
+        fk_val = Map.get(model, fk_atom)
         row = if fk_val, do: related.find(fk_val), else: nil
         put_loaded(model, relation_name, row)
 
@@ -162,7 +229,6 @@ defmodule Laravex.Database.Model do
   end
 
   defp put_loaded(model, name, value) do
-    # Store loaded relations in process dict keyed by model identity when struct has no slot
     key = {model.__struct__, Map.get(model, :id), name}
     Process.put({:laravex_relation, key}, value)
     model
@@ -187,7 +253,8 @@ defmodule Laravex.Database.Model do
 
     attrs
     |> Enum.filter(fn {k, _} ->
-      k in fillable or k in ["id", "created_at", "updated_at", "email_verified_at", "remember_token"]
+      k in fillable or
+        k in ["id", "created_at", "updated_at", "email_verified_at", "remember_token", "deleted_at"]
     end)
     |> Map.new(fn {k, v} ->
       {k, cast_one(Map.get(casts, k), v)}

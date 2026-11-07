@@ -1,34 +1,62 @@
 defmodule Laravex.View do
   @moduledoc """
-  Blade-like view renderer: {{ }}, @csrf, @vite, @if, @foreach, @error, layouts.
+  Blade-like view renderer: echoes, csrf, vite, if/foreach/error,
+  components/slots, push/stack, and layouts.
   """
 
   def make(name, assigns \\ %{}) when is_binary(name) do
+    Process.put(:laravex_stacks, %{})
     base = Laravex.Foundation.Application.base_path()
     path = find_view(base, name)
     unless path, do: raise("View [#{name}] not found.")
 
     contents = File.read!(path)
-    rendered = render_string(contents, assigns)
+    rendered = render_string(contents, merge_shared(assigns))
     Laravex.Http.Response.html(rendered)
   end
 
   def render_string(contents, assigns) do
-    assigns = Map.new(assigns, fn {k, v} -> {to_string(k), v} end)
+    assigns = stringify_assigns(assigns)
 
     contents
     |> apply_extends(assigns)
+    |> replace_components(assigns)
     |> replace_vite()
     |> replace_csrf(assigns)
+    |> replace_push()
     |> replace_foreach(assigns)
     |> replace_error(assigns)
     |> replace_directives(assigns)
     |> replace_echoes(assigns)
+    |> replace_stacks()
+  end
+
+  defp merge_shared(assigns) do
+    shared =
+      case Process.get(:laravex_request) do
+        %{errors: errors, old: old, session: session} ->
+          %{
+            "errors" => errors || %{},
+            "old" => old || %{},
+            "_token" => Map.get(session || %{}, "_token"),
+            "csrf_token" => Map.get(session || %{}, "_token")
+          }
+
+        _ ->
+          %{}
+      end
+
+    Map.merge(shared, stringify_assigns(assigns))
+  end
+
+  defp stringify_assigns(assigns) when is_map(assigns) do
+    Map.new(assigns, fn {k, v} -> {to_string(k), v} end)
   end
 
   defp find_view(base, name) do
     [
       Path.join([base, "resources", "views", "#{name}.blade.php"]),
+      Path.join([base, "resources", "views", "components", "#{name}.blade.php"]),
       Path.join([base, "resources", "views", "#{name}.html"]),
       Path.join([base, "resources", "views", "#{name}.eex"])
     ]
@@ -69,6 +97,58 @@ defmodule Laravex.View do
     end
   end
 
+  defp replace_components(contents, assigns) do
+    Regex.replace(
+      ~r/@component\(['"]([^'"]+)['"](?:,\s*(\[.*?\]))?\)(.*?)@endcomponent/s,
+      contents,
+      fn _, name, attrs_src, inner ->
+        slots =
+          Regex.scan(~r/@slot\(['"]([^'"]+)['"]\)(.*?)@endslot/s, inner)
+          |> Map.new(fn [_, slot_name, body] -> {slot_name, String.trim(body)} end)
+
+        slot =
+          Regex.replace(~r/@slot\(['"][^'"]+['"]\).*?@endslot/s, inner, "")
+          |> String.trim()
+
+        component_assigns =
+          assigns
+          |> Map.merge(parse_attrs(attrs_src))
+          |> Map.put("slot", slot)
+          |> Map.merge(Map.new(slots, fn {k, v} -> {k, v} end))
+
+        base = Laravex.Foundation.Application.base_path()
+
+        path =
+          find_view(base, name) ||
+            find_view(base, "components/#{name}")
+
+        if path do
+          File.read!(path)
+          |> then(fn html ->
+            html
+            |> String.replace("{{ $slot }}", slot)
+            |> String.replace("{{ slot }}", slot)
+            |> replace_foreach(component_assigns)
+            |> replace_error(component_assigns)
+            |> replace_directives(component_assigns)
+            |> replace_echoes(component_assigns)
+          end)
+        else
+          "<!-- missing component #{name} -->"
+        end
+      end
+    )
+  end
+
+  defp parse_attrs(nil), do: %{}
+  defp parse_attrs(""), do: %{}
+
+  defp parse_attrs(src) do
+    # Lightweight: ['type' => 'error', "title" => "Hi"]
+    Regex.scan(~r/['"](\w+)['"]\s*=>\s*['"]([^'"]*)['"]/, src || "")
+    |> Map.new(fn [_, k, v] -> {k, v} end)
+  end
+
   defp replace_vite(contents) do
     Regex.replace(~r/@vite\(\[(.*?)\]\)/, contents, fn _, inner ->
       assets =
@@ -92,6 +172,23 @@ defmodule Laravex.View do
     |> String.replace("{{ csrf_token() }}", token)
   end
 
+  defp replace_push(contents) do
+    Regex.replace(~r/@push\(['"]([^'"]+)['"]\)(.*?)@endpush/s, contents, fn _, stack, body ->
+      stacks = Process.get(:laravex_stacks, %{})
+      list = Map.get(stacks, stack, []) ++ [String.trim(body)]
+      Process.put(:laravex_stacks, Map.put(stacks, stack, list))
+      ""
+    end)
+  end
+
+  defp replace_stacks(contents) do
+    stacks = Process.get(:laravex_stacks, %{})
+
+    Regex.replace(~r/@stack\(['"]([^'"]+)['"]\)/, contents, fn _, name ->
+      stacks |> Map.get(name, []) |> Enum.join("\n")
+    end)
+  end
+
   defp replace_foreach(contents, assigns) do
     Regex.replace(~r/@foreach\s*\(\s*\$?(\w+)\s+as\s+\$?(\w+)\s*\)(.*?)@endforeach/s, contents, fn _,
                                                                                                list_key,
@@ -109,7 +206,7 @@ defmodule Laravex.View do
   end
 
   defp replace_error(contents, assigns) do
-    errors = Map.get(assigns, "errors") || Map.get(assigns, :errors) || %{}
+    errors = Map.get(assigns, "errors") || %{}
 
     Regex.replace(~r/@error\(['"]([^'"]+)['"]\)(.*?)@enderror/s, contents, fn _, field, body ->
       case Map.get(errors, field) || Map.get(errors, String.to_atom(field)) do

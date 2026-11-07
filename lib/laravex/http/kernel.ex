@@ -14,15 +14,17 @@ defmodule Laravex.Http.Kernel do
             response
 
           {:ok, request} ->
+            Process.put(:laravex_request, request)
+
             case Laravex.Routing.Router.invoke(handler, request, opts) do
               %Laravex.Http.Response{} = response ->
-                persist_session(request, response)
+                persist_session(Process.get(:laravex_request, request), response)
 
               body when is_binary(body) ->
-                persist_session(request, Laravex.Http.Response.html(body))
+                persist_session(Process.get(:laravex_request, request), Laravex.Http.Response.html(body))
 
               other ->
-                persist_session(request, Laravex.Http.Response.html(inspect(other)))
+                persist_session(Process.get(:laravex_request, request), Laravex.Http.Response.html(inspect(other)))
             end
         end
     end

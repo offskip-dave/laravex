@@ -21,6 +21,14 @@ defmodule Laravex.Database.Query do
     %{q | wheres: q.wheres ++ [{"#{column} #{op} ?", value}], bindings: q.bindings ++ [value]}
   end
 
+  def where_null(%__MODULE__{} = q, column) do
+    %{q | wheres: q.wheres ++ [{"#{column} IS NULL", :skip}]}
+  end
+
+  def where_not_null(%__MODULE__{} = q, column) do
+    %{q | wheres: q.wheres ++ [{"#{column} IS NOT NULL", :skip}]}
+  end
+
   def order_by(%__MODULE__{} = q, column, dir \\ "asc") do
     %{q | order: "#{column} #{String.upcase(to_string(dir))}"}
   end

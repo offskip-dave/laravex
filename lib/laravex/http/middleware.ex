@@ -68,27 +68,18 @@ defmodule Laravex.Http.Middleware.EncryptCookies do
 end
 
 defmodule Laravex.Http.Middleware.ShareErrors do
-  @moduledoc "Shares validation/flash errors from the session into request assigns."
+  @moduledoc "Shares validation/flash errors from the session onto the request."
 
   def handle(request, _opts) do
     errors = Map.get(request.session, "_errors", %{})
     old = Map.get(request.session, "_old", %{})
 
-    request =
-      request
-      |> Map.put(:errors, errors)
-      |> Map.put(:old, old)
-      |> then(fn req ->
-        # Clear flashed errors after sharing (Laravel-style once)
-        session =
-          req.session
-          |> Map.delete("_errors")
-          |> Map.delete("_old")
+    session =
+      request.session
+      |> Map.delete("_errors")
+      |> Map.delete("_old")
 
-        %{req | session: session}
-      end)
-
-    {:ok, request}
+    {:ok, %{request | errors: errors, old: old, session: session}}
   end
 end
 

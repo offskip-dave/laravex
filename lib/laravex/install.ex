@@ -36,7 +36,7 @@ defmodule Laravex.Install do
       IO.puts("API routes file created at routes/api.ex — register Routes.Api in bootstrap if needed.")
     end
 
-    IO.puts("API scaffolding installed (routes/api.ex + token auth).")
+    IO.puts("API scaffolding installed (routes/api.ex + token auth). Recompile to load Routes.Api.")
     :ok
   end
 

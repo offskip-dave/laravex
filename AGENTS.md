@@ -11,12 +11,16 @@ config/        # Laravel-style *.exs maps (not Mix env files)
 database/      # migrations, factories, seeders
 public/        # HTTP entry + static assets
 resources/     # views, css, js
-routes/        # web.ex, console.ex (+ api/auth after install:*)
+routes/        # web.ex, console.ex only by default
 storage/       # logs, sessions, cache, uploads
 tests/         # Feature + Unit (Laravel tests/ layout)
 artisan        # CLI → mix artisan
 lib/laravex/   # Framework runtime (Illuminate analogue)
 ```
+
+Optional installables (`./artisan install:api|broadcasting|starter-kit`) add
+`routes/api.ex`, `routes/auth.ex`, `config/broadcasting.exs`, auth views, etc.
+Do not commit those into the default tree unless the install step is intentional.
 
 ## Commands
 
