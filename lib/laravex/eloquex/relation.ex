@@ -1,11 +1,19 @@
 defmodule Laravex.Eloquex.Relation do
-  @moduledoc "Eloquex HasMany / BelongsTo relation helpers."
+  @moduledoc """
+  Eloquex HasMany / BelongsTo relation helpers.
+
+  Related queries honor soft deletes via `related.query/1` (pass `with_trashed: true`
+  to include trashed children).
+  """
 
   defmodule HasMany do
     defstruct [:owner, :related, :foreign_key, :name]
 
-    def get(%__MODULE__{owner: owner, related: related, foreign_key: fk}) do
-      related.where(fk, owner.id)
+    def get(%__MODULE__{owner: owner, related: related, foreign_key: fk}, opts \\ []) do
+      related.query(opts)
+      |> Laravex.Database.Query.where(fk, owner.id)
+      |> Laravex.Database.Query.get()
+      |> Enum.map(&related.from_row/1)
     end
 
     def create(%__MODULE__{owner: owner, related: related, foreign_key: fk}, attrs)
@@ -18,16 +26,21 @@ defmodule Laravex.Eloquex.Relation do
       related.create(attrs)
     end
 
-    def count(%__MODULE__{} = rel), do: length(get(rel))
+    def count(%__MODULE__{} = rel, opts \\ []), do: length(get(rel, opts))
   end
 
   defmodule BelongsTo do
     defstruct [:owner, :related, :foreign_key, :name]
 
-    def get(%__MODULE__{owner: owner, related: related, foreign_key: fk}) do
+    def get(%__MODULE__{owner: owner, related: related, foreign_key: fk}, opts \\ []) do
       fk_atom = String.to_atom(fk)
       id = Map.get(owner, fk_atom)
-      if id, do: related.find(id), else: nil
+
+      if id do
+        related.find(id, opts)
+      else
+        nil
+      end
     end
 
     def associate(%__MODULE__{owner: owner, foreign_key: fk}, parent) do

@@ -15,9 +15,12 @@ defmodule Laravex.Mail.Mailer do
     :ok
   end
 
+  @supported_drivers ~w(log array)
+
   def send(mailable) do
     ensure()
-    driver = Laravex.Config.Repository.get("mail.default", "log")
+    driver = to_string(Laravex.Config.Repository.get("mail.default", "log"))
+    ensure_driver!(driver)
     message = normalize(mailable)
 
     if Application.get_env(:laravex, :mail_fake, false) or driver == "array" do
@@ -31,11 +34,18 @@ defmodule Laravex.Mail.Mailer do
       "log" ->
         Laravex.Log.Logger.info("Mail sent", message)
         :ok
-
-      _ ->
-        Laravex.Log.Logger.info("Mail sent via #{driver}", message)
-        :ok
     end
+  end
+
+  defp ensure_driver!(driver) do
+    unless driver in @supported_drivers do
+      raise ArgumentError,
+            "Mailer uses unsupported driver #{inspect(driver)}. " <>
+              "Supported drivers: #{Enum.join(@supported_drivers, ", ")} " <>
+              "(set MAIL_MAILER=log|array)."
+    end
+
+    :ok
   end
 
   def sent do

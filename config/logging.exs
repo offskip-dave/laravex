@@ -43,11 +43,9 @@ log_path = Path.join(base, "storage/logs/laravex.log")
       "replace_placeholders" => true
     },
     "stderr" => %{
-      "driver" => "monolog",
+      "driver" => "stderr",
       "level" => env.("LOG_LEVEL", "debug"),
-      "handler" => "stream",
-      "handler_with" => %{"stream" => "php://stderr"},
-      "processors" => ["psr"]
+      "replace_placeholders" => true
     },
     "syslog" => %{
       "driver" => "syslog",
@@ -61,8 +59,7 @@ log_path = Path.join(base, "storage/logs/laravex.log")
       "replace_placeholders" => true
     },
     "null" => %{
-      "driver" => "monolog",
-      "handler" => "null"
+      "driver" => "null"
     }
   }
 }

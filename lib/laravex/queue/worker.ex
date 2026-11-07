@@ -192,6 +192,82 @@ defmodule Laravex.Queue.Worker do
 
   defp encode_args(args) when is_list(args), do: Enum.map(args, &to_string/1)
   defp encode_args(args), do: [to_string(args)]
+
+  def failed_jobs do
+    if Laravex.Database.Schema.has_table?("failed_jobs") do
+      Laravex.Database.Connection.query(
+        "SELECT id, uuid, connection, queue, payload, exception, failed_at FROM failed_jobs ORDER BY id DESC"
+      )
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  def retry_failed(id_or_uuid) do
+    row = find_failed(id_or_uuid)
+
+    if is_nil(row) do
+      {:error, :not_found}
+    else
+      case Laravex.Support.JSON.decode(row["payload"] || "") do
+        {:ok, %{"job" => job, "args" => args}} ->
+          job_mod = resolve_job_module(job)
+          push(job_mod, args || [], [])
+          forget_failed(row["uuid"] || row["id"])
+          {:ok, row}
+
+        _ ->
+          {:error, :bad_payload}
+      end
+    end
+  end
+
+  def forget_failed(id_or_uuid) do
+    row = find_failed(id_or_uuid)
+
+    if row && Laravex.Database.Schema.has_table?("failed_jobs") do
+      Laravex.Database.Connection.execute("DELETE FROM failed_jobs WHERE id = ? OR uuid = ?", [
+        row["id"],
+        row["uuid"]
+      ])
+
+      :ok
+    else
+      :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  def flush_failed do
+    if Laravex.Database.Schema.has_table?("failed_jobs") do
+      Laravex.Database.Connection.execute("DELETE FROM failed_jobs")
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp find_failed(id_or_uuid) do
+    id = to_string(id_or_uuid)
+
+    if Laravex.Database.Schema.has_table?("failed_jobs") do
+      case Laravex.Database.Connection.query(
+             "SELECT * FROM failed_jobs WHERE uuid = ? OR CAST(id AS TEXT) = ? LIMIT 1",
+             [id, id]
+           ) do
+        [row | _] -> row
+        _ -> nil
+      end
+    else
+      nil
+    end
+  rescue
+    _ -> nil
+  end
 end
 
 defmodule Laravex.Queue.Job do

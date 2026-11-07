@@ -3,16 +3,17 @@ defmodule App.Providers.EventServiceProvider do
   Register event → listener mappings (Laravel EventServiceProvider).
 
   Override `listen/0` in your app, or append via `make:event` / `make:listener`.
+  When `bootstrap/cache/events.term` exists (`event:cache`), that map is loaded instead.
   """
 
   def register, do: :ok
 
   def boot do
-    Enum.each(listen(), fn {event, listeners} ->
-      Enum.each(Laravex.Support.Arr.wrap(listeners), fn listener ->
-        Laravex.Events.Dispatcher.listen(event, listener)
-      end)
-    end)
+    if Laravex.Events.EventCache.exists?() do
+      Laravex.Events.EventCache.load!()
+    else
+      Laravex.Events.EventCache.register(listen())
+    end
 
     :ok
   end

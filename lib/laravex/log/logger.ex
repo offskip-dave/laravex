@@ -23,9 +23,12 @@ defmodule Laravex.Log.Logger do
 
   defp write_channel("null", _level, _message, _meta), do: :ok
 
+  @supported_drivers ~w(single daily monthly stderr errorlog null)
+
   defp write_channel(name, level, message, meta) when is_binary(name) do
     cfg = Laravex.Config.Repository.get("logging.channels.#{name}", %{})
-    driver = Map.get(cfg, "driver") || Map.get(cfg, :driver) || "single"
+    driver = to_string(Map.get(cfg, "driver") || Map.get(cfg, :driver) || "single")
+    ensure_driver!(name, driver)
     min_level = Map.get(cfg, "level") || Map.get(cfg, :level) || "debug"
 
     if level_allowed?(level, min_level) do
@@ -38,13 +41,21 @@ defmodule Laravex.Log.Logger do
         "stderr" -> IO.puts(:stderr, format(level, message, meta))
         "errorlog" -> IO.puts(:stderr, format(level, message, meta))
         "null" -> :ok
-        "slack" -> append_file(cfg, level, "[slack-stub] " <> message, meta, :single)
-        "syslog" -> append_file(cfg, level, "[syslog-stub] " <> message, meta, :single)
-        _ -> append_file(cfg, level, message, meta, :single)
       end
     else
       :ok
     end
+  end
+
+  defp ensure_driver!(channel, driver) do
+    unless driver in @supported_drivers do
+      raise ArgumentError,
+            "Log channel #{inspect(channel)} uses unsupported driver #{inspect(driver)}. " <>
+              "Supported drivers: #{Enum.join(@supported_drivers, ", ")} " <>
+              "(slack/syslog/etc. are out of scope for Laravex)."
+    end
+
+    :ok
   end
 
   defp level_allowed?(level, min) do

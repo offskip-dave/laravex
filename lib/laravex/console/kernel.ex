@@ -12,6 +12,8 @@ defmodule Laravex.Console.Kernel do
     "migrate:status" => {&__MODULE__.cmd_status/1, "Show migration status"},
     "db:seed" => {&__MODULE__.cmd_seed/1, "Seed the database"},
     "db:wipe" => {&__MODULE__.cmd_wipe/1, "Drop all tables"},
+    "db:show" => {&__MODULE__.cmd_db_show/1, "Display information about the given database"},
+    "model:show" => {&__MODULE__.cmd_model_show/1, "Show information about an Eloquex model"},
     "route:list" => {&__MODULE__.cmd_routes/1, "List routes"},
     "config:cache" => {&__MODULE__.cmd_config_cache/1, "Cache configuration"},
     "config:clear" => {&__MODULE__.cmd_config_clear/1, "Clear configuration cache"},
@@ -22,9 +24,15 @@ defmodule Laravex.Console.Kernel do
     "optimize" => {&__MODULE__.cmd_optimize/1, "Cache framework bootstrap files"},
     "optimize:clear" => {&__MODULE__.cmd_optimize_clear/1, "Remove cached bootstrap files"},
     "queue:work" => {&__MODULE__.cmd_queue_work/1, "Process queue jobs"},
+    "queue:failed" => {&__MODULE__.cmd_queue_failed/1, "List all of the failed queue jobs"},
+    "queue:retry" => {&__MODULE__.cmd_queue_retry/1, "Retry a failed queue job"},
+    "queue:forget" => {&__MODULE__.cmd_queue_forget/1, "Delete a failed queue job"},
+    "queue:flush" => {&__MODULE__.cmd_queue_flush/1, "Flush all of the failed queue jobs"},
     "schedule:run" => {&__MODULE__.cmd_schedule/1, "Run due scheduled tasks"},
     "schedule:list" => {&__MODULE__.cmd_schedule_list/1, "List all scheduled tasks"},
     "event:list" => {&__MODULE__.cmd_event_list/1, "List registered events and listeners"},
+    "event:cache" => {&__MODULE__.cmd_event_cache/1, "Cache the event → listener map"},
+    "event:clear" => {&__MODULE__.cmd_event_clear/1, "Clear the cached events file"},
     "tinker" => {&__MODULE__.cmd_tinker/1, "Interact with the application"},
     "storage:link" => {&__MODULE__.cmd_storage_link/1, "Link public storage"},
     "down" => {&__MODULE__.cmd_down/1, "Put the application into maintenance mode"},
@@ -179,6 +187,7 @@ defmodule Laravex.Console.Kernel do
   def cmd_optimize(_) do
     cmd_config_cache([])
     cmd_route_cache([])
+    cmd_event_cache([])
     cmd_view_cache([])
     IO.puts("Files cached successfully.")
   end
@@ -186,6 +195,7 @@ defmodule Laravex.Console.Kernel do
   def cmd_optimize_clear(_) do
     cmd_config_clear([])
     cmd_route_clear([])
+    cmd_event_clear([])
     cmd_view_clear([])
     IO.puts("Cached bootstrap files cleared successfully.")
   end
@@ -193,6 +203,117 @@ defmodule Laravex.Console.Kernel do
   def cmd_queue_work(args) do
     once = "--once" in args
     Laravex.Queue.Worker.work(once: once)
+  end
+
+  def cmd_queue_failed(_) do
+    jobs = Laravex.Queue.Worker.failed_jobs()
+
+    if jobs == [] do
+      IO.puts("No failed jobs!")
+    else
+      IO.puts(
+        String.pad_trailing("ID", 6) <>
+          String.pad_trailing("UUID", 20) <>
+          String.pad_trailing("Queue", 12) <> "Failed At"
+      )
+
+      Enum.each(jobs, fn job ->
+        IO.puts(
+          String.pad_trailing(to_string(job["id"]), 6) <>
+            String.pad_trailing(to_string(job["uuid"]), 20) <>
+            String.pad_trailing(to_string(job["queue"]), 12) <>
+            to_string(job["failed_at"])
+        )
+      end)
+    end
+  end
+
+  def cmd_queue_retry([id | _]) do
+    case Laravex.Queue.Worker.retry_failed(id) do
+      {:ok, _} -> IO.puts("The failed job [#{id}] has been pushed back onto the queue.")
+      {:error, :not_found} -> IO.puts(:stderr, "No failed job matches [#{id}].")
+      {:error, :bad_payload} -> IO.puts(:stderr, "Unable to decode failed job payload.")
+    end
+  end
+
+  def cmd_queue_retry(_), do: IO.puts("Usage: artisan queue:retry {id|uuid}")
+
+  def cmd_queue_forget([id | _]) do
+    case Laravex.Queue.Worker.forget_failed(id) do
+      :ok -> IO.puts("Failed job deleted successfully.")
+      _ -> IO.puts(:stderr, "No failed job matches [#{id}].")
+    end
+  end
+
+  def cmd_queue_forget(_), do: IO.puts("Usage: artisan queue:forget {id|uuid}")
+
+  def cmd_queue_flush(_) do
+    Laravex.Queue.Worker.flush_failed()
+    IO.puts("All failed jobs deleted successfully.")
+  end
+
+  def cmd_db_show(args) do
+    table =
+      Enum.find_value(args, fn
+        "--table=" <> t -> t
+        t -> if String.starts_with?(t, "-"), do: nil, else: t
+      end)
+
+    if table do
+      info = Laravex.Database.Introspection.table_info(table)
+      IO.puts("Table: #{info.name}\n")
+      IO.puts(String.pad_trailing("Column", 24) <> String.pad_trailing("Type", 12) <> "Nullable")
+
+      Enum.each(info.columns, fn col ->
+        IO.puts(
+          String.pad_trailing(to_string(col["name"]), 24) <>
+            String.pad_trailing(to_string(col["type"]), 12) <>
+            if(col["notnull"] in [0, "0"], do: "yes", else: "no")
+        )
+      end)
+    else
+      tables = Laravex.Database.Introspection.tables()
+      IO.puts("Database\n")
+      Enum.each(tables, fn t -> IO.puts("  #{t}") end)
+    end
+  end
+
+  def cmd_model_show([name | _]) do
+    case Laravex.Database.Introspection.resolve_model(name) do
+      nil ->
+        IO.puts(:stderr, "Model [#{name}] not found.")
+
+      mod ->
+        info = Laravex.Database.Introspection.model_info(mod)
+        IO.puts("Model: #{inspect(info.module)}")
+        IO.puts("Table: #{info.table || "?"}")
+        IO.puts("Soft deletes: #{info.soft_deletes?}")
+        IO.puts("Fillable: #{inspect(info.fillable)}")
+        IO.puts("Guarded: #{inspect(info.guarded)}")
+        IO.puts("Casts: #{inspect(info.casts)}")
+        IO.puts("Appends: #{inspect(info.appends)}")
+        IO.puts("Relations: #{inspect(info.relations)}")
+
+        if info.columns != [] do
+          IO.puts("\nColumns:")
+
+          Enum.each(info.columns, fn col ->
+            IO.puts("  #{col["name"]} (#{col["type"]})")
+          end)
+        end
+    end
+  end
+
+  def cmd_model_show(_), do: IO.puts("Usage: artisan model:show {Model}")
+
+  def cmd_event_cache(_) do
+    Laravex.Events.EventCache.cache!()
+    IO.puts("Events cached successfully.")
+  end
+
+  def cmd_event_clear(_) do
+    Laravex.Events.EventCache.clear!()
+    IO.puts("Cached events cleared.")
   end
 
   def cmd_schedule(_), do: Laravex.Console.Schedule.run()
@@ -215,39 +336,39 @@ defmodule Laravex.Console.Kernel do
   end
 
   def cmd_event_list(_) do
-    provider_map =
-      if Code.ensure_loaded?(App.Providers.EventServiceProvider) and
-           function_exported?(App.Providers.EventServiceProvider, :listen, 0) do
-        App.Providers.EventServiceProvider.listen()
-      else
-        %{}
-      end
+    provider_map = event_provider_listen()
+    runtime_map = event_runtime_listeners()
+    merged = Map.merge(provider_map, runtime_map, fn _k, a, b -> List.wrap(a) ++ List.wrap(b) end)
 
-    runtime_map =
-      try do
-        Laravex.Events.Dispatcher.listeners()
-      rescue
-        _ -> %{}
-      end
-
-    events =
-      (Map.keys(provider_map) ++ Map.keys(runtime_map))
-      |> Enum.uniq()
-      |> Enum.sort_by(&to_string/1)
-
-    if events == [] do
+    if map_size(merged) == 0 do
       IO.puts("No events have been registered.")
     else
-      Enum.each(events, fn event ->
-        listeners =
-          List.wrap(Map.get(provider_map, event)) ++ List.wrap(Map.get(runtime_map, event))
-
+      merged
+      |> Enum.sort_by(fn {event, _} -> to_string(event) end)
+      |> Enum.each(fn {event, listeners} ->
         IO.puts(inspect(event))
 
-        Enum.each(Enum.uniq(listeners), fn listener ->
+        Enum.each(Enum.uniq(List.wrap(listeners)), fn listener ->
           IO.puts("  ⇂ #{inspect(listener)}")
         end)
       end)
+    end
+  end
+
+  defp event_provider_listen do
+    if Code.ensure_loaded?(App.Providers.EventServiceProvider) and
+         function_exported?(App.Providers.EventServiceProvider, :listen, 0) do
+      App.Providers.EventServiceProvider.listen()
+    else
+      %{}
+    end
+  end
+
+  defp event_runtime_listeners do
+    try do
+      Laravex.Events.Dispatcher.listeners()
+    rescue
+      _ -> %{}
     end
   end
 

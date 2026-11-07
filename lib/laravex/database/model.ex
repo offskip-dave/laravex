@@ -272,8 +272,9 @@ defmodule Laravex.Database.Model do
     end)
   end
 
-  def load_relation(model, owner_mod, relation_name) do
+  def load_relation(model, owner_mod, relation_name, opts \\ []) do
     relation_name = to_string(relation_name)
+    query_opts = Keyword.take(opts, [:with_trashed, :only_trashed])
 
     relations =
       if function_exported?(owner_mod, :relations, 0) do
@@ -287,13 +288,18 @@ defmodule Laravex.Database.Model do
            _ -> false
          end) do
       {:has_many, _name, related, fk} ->
-        rows = related.where(fk, model.id)
+        rows =
+          related.query(query_opts)
+          |> Laravex.Database.Query.where(fk, model.id)
+          |> Laravex.Database.Query.get()
+          |> Enum.map(&related.from_row/1)
+
         put_loaded(model, relation_name, rows)
 
       {:belongs_to, _name, related, fk} ->
         fk_atom = String.to_atom(fk)
         fk_val = Map.get(model, fk_atom)
-        row = if fk_val, do: related.find(fk_val), else: nil
+        row = if fk_val, do: related.find(fk_val, query_opts), else: nil
         put_loaded(model, relation_name, row)
 
       _ ->

@@ -133,6 +133,8 @@ defmodule Laravex.Support.Helpers do
 
   def http, do: Laravex.Http.Client
 
+  def bus, do: Laravex.Bus
+
   def cookie(name) when is_binary(name) or is_atom(name) do
     case Process.get(:laravex_request) do
       %{cookies: cookies} when is_map(cookies) ->
