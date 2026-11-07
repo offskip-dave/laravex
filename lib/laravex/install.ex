@@ -38,8 +38,13 @@ defmodule Laravex.Install do
 
     File.write!(Path.join(base, "routes/channels.ex"), """
     defmodule Routes.Channels do
+      @moduledoc "Broadcast channel authorization (Laravel routes/channels.php)."
+
       def register do
-        # Broadcast channel authorization callbacks
+        Laravex.Broadcasting.Channel.channel("App.Models.User.{id}", fn user, %{"id" => id} ->
+          not is_nil(user) and to_string(user.id) == to_string(id)
+        end)
+
         :ok
       end
     end

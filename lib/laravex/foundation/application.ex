@@ -134,6 +134,7 @@ defmodule Laravex.Foundation.Application do
 
     maybe_register(Module.concat(["Routes", "Api"]))
     maybe_register(Module.concat(["Routes", "Auth"]))
+    maybe_register(Module.concat(["Routes", "Channels"]))
     :ok
   end
 

@@ -22,6 +22,9 @@ defmodule Laravex.View do
 
   def render_string(contents, assigns) do
     assigns = stringify_assigns(assigns)
+    Process.put(:laravex_once_keys, MapSet.new())
+
+    {contents, verbatim} = extract_verbatim(contents)
 
     contents
     |> apply_extends(assigns)
@@ -38,12 +41,124 @@ defmodule Laravex.View do
     |> replace_foreach(assigns)
     |> replace_error(assigns)
     |> replace_session(assigns)
+    |> replace_isset_empty(assigns)
+    |> replace_once(assigns)
+    |> replace_class(assigns)
     |> replace_directives(assigns)
     |> replace_old(assigns)
     |> replace_json(assigns)
     |> replace_echoes(assigns)
     |> replace_stacks()
+    |> restore_verbatim(verbatim)
   end
+
+  defp extract_verbatim(contents) do
+    {html, blocks} =
+      Regex.scan(~r/@verbatim(.*?)@endverbatim/s, contents)
+      |> Enum.with_index()
+      |> Enum.reduce({contents, %{}}, fn {[full, body], idx}, {acc, map} ->
+        token = "%%LARAVEX_VERBATIM_#{idx}%%"
+        {String.replace(acc, full, token, global: false), Map.put(map, token, body)}
+      end)
+
+    {html, blocks}
+  end
+
+  defp restore_verbatim(contents, blocks) do
+    Enum.reduce(blocks, contents, fn {token, body}, acc ->
+      String.replace(acc, token, body)
+    end)
+  end
+
+  defp replace_isset_empty(contents, assigns) do
+    contents
+    |> then(fn html ->
+      Regex.replace(~r/@isset\(\s*\$?([a-zA-Z0-9_\.]+)\s*\)(.*?)@endisset/s, html, fn _, key, body ->
+        key = String.trim_leading(key, "$")
+        if assign_present?(assigns, key), do: body, else: ""
+      end)
+    end)
+    |> then(fn html ->
+      Regex.replace(~r/@empty\(\s*\$?([a-zA-Z0-9_\.]+)\s*\)(.*?)@endempty/s, html, fn _, key, body ->
+        key = String.trim_leading(key, "$")
+        value = get_in_assign(assigns, key)
+        if blank_assign?(value), do: body, else: ""
+      end)
+    end)
+  end
+
+  defp replace_once(contents, _assigns) do
+    Regex.replace(~r/@once(.*?)@endonce/s, contents, fn _, body ->
+      keys = Process.get(:laravex_once_keys, MapSet.new())
+      hash = :erlang.phash2(body)
+
+      if MapSet.member?(keys, hash) do
+        ""
+      else
+        Process.put(:laravex_once_keys, MapSet.put(keys, hash))
+        body
+      end
+    end)
+  end
+
+  defp replace_class(contents, assigns) do
+    Regex.replace(~r/@class\(\[(.*?)\]\)/s, contents, fn _, inner ->
+      classes =
+        inner
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.flat_map(fn part ->
+          case String.split(part, "=>", parts: 2) do
+            [class_expr, cond_expr] ->
+              class_name = unwrap_class_literal(String.trim(class_expr))
+
+              if truthy?(eval_expr(String.trim(cond_expr), assigns)) do
+                [class_name]
+              else
+                []
+              end
+
+            [class_expr] ->
+              [unwrap_class_literal(String.trim(class_expr))]
+          end
+        end)
+        |> Enum.reject(&(&1 == ""))
+
+      ~s(class="#{Enum.join(classes, " ")}")
+    end)
+  end
+
+  defp unwrap_class_literal("'" <> rest), do: String.trim_trailing(rest, "'")
+  defp unwrap_class_literal("\"" <> rest), do: String.trim_trailing(rest, "\"")
+  defp unwrap_class_literal(other), do: other
+
+  defp assign_present?(assigns, key) do
+    parts = String.split(key, ".")
+    {last, parents} = List.pop_at(parts, -1)
+
+    parent =
+      Enum.reduce_while(parents, assigns, fn part, acc ->
+        cond do
+          is_map(acc) and Map.has_key?(acc, part) -> {:cont, Map.get(acc, part)}
+          is_map(acc) and Map.has_key?(acc, String.to_atom(part)) ->
+            {:cont, Map.get(acc, String.to_atom(part))}
+          true -> {:halt, :__missing__}
+        end
+      end)
+
+    cond do
+      parent == :__missing__ -> false
+      is_map(parent) -> Map.has_key?(parent, last) or Map.has_key?(parent, String.to_atom(last))
+      true -> false
+    end
+  end
+
+  defp blank_assign?(nil), do: true
+  defp blank_assign?(""), do: true
+  defp blank_assign?([]), do: true
+  defp blank_assign?(%{} = m), do: map_size(m) == 0
+  defp blank_assign?(_), do: false
 
   defp merge_shared(assigns) do
     shared =

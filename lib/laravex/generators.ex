@@ -255,6 +255,87 @@ defmodule Laravex.Generators do
     :ok
   end
 
+  def make_job(name) do
+    stub("Jobs", name, """
+    defmodule App.Jobs.#{name} do
+      @moduledoc \"\"\"
+      Queued job. Use `queue: false` for sync-only jobs.
+
+          App.Jobs.#{name}.dispatch([arg])
+      \"\"\"
+
+      use Laravex.Queue.Job, queue: true
+
+      def handle(args) do
+        # TODO: implement
+        args
+      end
+    end
+    """)
+  end
+
+  def make_mail(name) do
+    stub("Mail", name, """
+    defmodule App.Mail.#{name} do
+      use Laravex.Mail.Mailable
+
+      def to, do: "user@example.com"
+      def subject, do: "#{name}"
+      def content, do: "Hello"
+    end
+    """)
+  end
+
+  def make_notification(name) do
+    stub("Notifications", name, """
+    defmodule App.Notifications.#{name} do
+      def via(_notifiable), do: [:mail, :database, :log]
+
+      def to_mail(user) do
+        %{to: user.email, subject: "#{name}", body: "Hi"}
+      end
+
+      def to_array(user) do
+        %{"message" => "#{name}", "email" => Map.get(user, :email)}
+      end
+
+      def to_database(user), do: to_array(user)
+    end
+    """)
+  end
+
+  def make_request(name) do
+    stub("Http/Requests", name, """
+    defmodule App.Http.Requests.#{name} do
+      use Laravex.Http.FormRequest
+
+      def rules, do: %{"name" => "required|string"}
+    end
+    """)
+  end
+
+  def make_rule(name) do
+    stub("Rules", name, """
+    defmodule App.Rules.#{name} do
+      @behaviour Laravex.Validation.Rule
+
+      def passes?(_attribute, _value), do: true
+      def message, do: "validation failed"
+    end
+    """)
+  end
+
+  def make_provider(name) do
+    stub("Providers", name, """
+    defmodule App.Providers.#{name} do
+      def register, do: :ok
+      def boot, do: :ok
+    end
+    """)
+
+    append_provider(name)
+  end
+
   def stub(subdir, name, contents) do
     path =
       Path.join([Laravex.Foundation.Application.base_path(), "app", subdir, Macro.underscore(name) <> ".ex"])
@@ -262,6 +343,37 @@ defmodule Laravex.Generators do
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, contents)
     IO.puts("Created: #{path}")
+    :ok
+  end
+
+  defp append_provider(name) do
+    path = Path.join(Laravex.Foundation.Application.base_path(), "bootstrap/providers.ex")
+
+    if File.exists?(path) do
+      contents = File.read!(path)
+      entry = "App.Providers.#{name}"
+
+      cond do
+        String.contains?(contents, entry) ->
+          :ok
+
+        String.contains?(contents, "def list do") ->
+          updated =
+            String.replace(
+              contents,
+              "def list do",
+              "def list do\n    # #{entry} — uncomment after compile:\n    # #{entry},\n",
+              global: false
+            )
+
+          File.write!(path, updated)
+          IO.puts("Noted #{entry} in bootstrap/providers.ex (add to list when ready).")
+
+        true ->
+          :ok
+      end
+    end
+
     :ok
   end
 

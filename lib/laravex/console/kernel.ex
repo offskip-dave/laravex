@@ -454,7 +454,7 @@ defmodule Laravex.Console.Kernel do
   def cmd_make_controller(_), do: usage("make:controller", "Name")
   def cmd_make_migration([name | _]), do: Laravex.Generators.make_migration(name)
   def cmd_make_migration(_), do: usage("make:migration", "name")
-  def cmd_make_job([name | _]), do: Laravex.Generators.stub("Jobs", name, job_stub(name))
+  def cmd_make_job([name | _]), do: Laravex.Generators.make_job(name)
   def cmd_make_job(_), do: usage("make:job", "Name")
   def cmd_make_event([name | _]), do: Laravex.Generators.make_event(name)
   def cmd_make_event(_), do: usage("make:event", "Name")
@@ -470,17 +470,17 @@ defmodule Laravex.Console.Kernel do
   end
 
   def cmd_make_listener(_), do: usage("make:listener", "Name [--event=Event]")
-  def cmd_make_mail([name | _]), do: Laravex.Generators.stub("Mail", name, mail_stub(name))
+  def cmd_make_mail([name | _]), do: Laravex.Generators.make_mail(name)
   def cmd_make_mail(_), do: usage("make:mail", "Name")
-  def cmd_make_notification([name | _]), do: Laravex.Generators.stub("Notifications", name, notification_stub(name))
+  def cmd_make_notification([name | _]), do: Laravex.Generators.make_notification(name)
   def cmd_make_notification(_), do: usage("make:notification", "Name")
   def cmd_make_policy([name | _]), do: Laravex.Generators.make_policy(name)
   def cmd_make_policy(_), do: usage("make:policy", "Name")
-  def cmd_make_request([name | _]), do: Laravex.Generators.stub("Http/Requests", name, request_stub(name))
+  def cmd_make_request([name | _]), do: Laravex.Generators.make_request(name)
   def cmd_make_request(_), do: usage("make:request", "Name")
-  def cmd_make_rule([name | _]), do: Laravex.Generators.stub("Rules", name, rule_stub(name))
+  def cmd_make_rule([name | _]), do: Laravex.Generators.make_rule(name)
   def cmd_make_rule(_), do: usage("make:rule", "Name")
-  def cmd_make_provider([name | _]), do: Laravex.Generators.stub("Providers", name, provider_stub(name))
+  def cmd_make_provider([name | _]), do: Laravex.Generators.make_provider(name)
   def cmd_make_provider(_), do: usage("make:provider", "Name")
   def cmd_make_command([name | _]), do: Laravex.Generators.make_command(name)
   def cmd_make_command(_), do: usage("make:command", "Name")
@@ -552,68 +552,6 @@ defmodule Laravex.Console.Kernel do
         end
     end
   end
-
-  defp job_stub(name), do: """
-  defmodule App.Jobs.#{name} do
-    @moduledoc \"\"\"
-    Queued job. Use `queue: false` for sync-only jobs.
-
-        App.Jobs.#{name}.dispatch([arg])
-        App.Jobs.#{name}.dispatch_sync([arg])
-        App.Jobs.#{name}.dispatch([arg], connection: "deferred", delay: 10)
-    \"\"\"
-
-    use Laravex.Queue.Job, queue: true
-
-    def handle(args) do
-      {:ok, args}
-    end
-  end
-  """
-
-  defp mail_stub(name), do: """
-  defmodule App.Mail.#{name} do
-    use Laravex.Mail.Mailable
-    def to, do: "user@example.com"
-    def subject, do: "#{name}"
-    def content, do: "Hello"
-  end
-  """
-
-  defp notification_stub(name), do: """
-  defmodule App.Notifications.#{name} do
-    def via(_), do: [:mail, :log]
-
-    def to_mail(user), do: %{to: user.email, subject: "#{name}", body: "Hi"}
-
-    def to_array(user) do
-      %{"message" => "#{name}", "email" => Map.get(user, :email)}
-    end
-  end
-  """
-
-  defp request_stub(name), do: """
-  defmodule App.Http.Requests.#{name} do
-    use Laravex.Http.FormRequest
-    def rules, do: %{"name" => "required|string"}
-  end
-  """
-
-  defp rule_stub(name), do: """
-  defmodule App.Rules.#{name} do
-    @behaviour Laravex.Validation.Rule
-
-    def passes?(_attribute, _value), do: true
-    def message, do: "validation failed"
-  end
-  """
-
-  defp provider_stub(name), do: """
-  defmodule App.Providers.#{name} do
-    def register, do: :ok
-    def boot, do: :ok
-  end
-  """
 
   defp describe_schedule_task(%{opts: opts} = task) do
     cond do
