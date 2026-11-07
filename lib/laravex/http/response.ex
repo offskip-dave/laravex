@@ -89,6 +89,23 @@ defmodule Laravex.Http.Response do
     download(contents, filename, opts)
   end
 
+  def with_header(%__MODULE__{} = resp, name, value) do
+    key = String.downcase(to_string(name))
+    headers = Enum.reject(resp.headers, fn {k, _} -> String.downcase(to_string(k)) == key end)
+    %{resp | headers: headers ++ [{key, to_string(value)}]}
+  end
+
+  def with_headers(%__MODULE__{} = resp, headers) when is_map(headers) do
+    Enum.reduce(headers, resp, fn {k, v}, acc -> with_header(acc, k, v) end)
+  end
+
+  def with_headers(%__MODULE__{} = resp, headers) when is_list(headers) do
+    Enum.reduce(headers, resp, fn
+      {k, v}, acc -> with_header(acc, k, v)
+      _, acc -> acc
+    end)
+  end
+
   def with_cookie(%__MODULE__{} = resp, name, value, opts \\ []) do
     max_age = Keyword.get(opts, :max_age)
     path = Keyword.get(opts, :path, Laravex.Config.Repository.get("session.path", "/"))

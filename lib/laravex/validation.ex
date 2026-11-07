@@ -461,6 +461,9 @@ defmodule Laravex.Validation do
       "does_not_contain:" <> rest ->
         does_not_contain_rule(field, value, rest)
 
+      "contains:" <> rest ->
+        contains_rule(field, value, rest)
+
       "filled" ->
         if blank?(value), do: ["The #{field} field must have a value."], else: []
 
@@ -983,30 +986,45 @@ defmodule Laravex.Validation do
       is_nil(value) or blank?(value) ->
         []
 
-      is_binary(value) ->
-        if Enum.any?(denied, &String.contains?(value, &1)),
-          do: ["The #{field} field contains a prohibited value."],
-          else: []
-
-      is_list(value) ->
-        stringified = Enum.map(value, &to_string/1)
-
-        if Enum.any?(denied, &(&1 in stringified)),
-          do: ["The #{field} field contains a prohibited value."],
-          else: []
-
-      is_map(value) ->
-        vals = value |> Map.values() |> Enum.map(&to_string/1)
-        keys = value |> Map.keys() |> Enum.map(&to_string/1)
-
-        if Enum.any?(denied, &(&1 in vals or &1 in keys)),
-          do: ["The #{field} field contains a prohibited value."],
-          else: []
+      contains_any?(value, denied) ->
+        ["The #{field} field contains a prohibited value."]
 
       true ->
         []
     end
   end
+
+  defp contains_rule(field, value, rest) do
+    needed = rest |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+
+    cond do
+      is_nil(value) or blank?(value) ->
+        []
+
+      contains_any?(value, needed) ->
+        []
+
+      true ->
+        ["The #{field} field must contain one of the following: #{Enum.join(needed, ", ")}."]
+    end
+  end
+
+  defp contains_any?(value, needles) when is_binary(value) do
+    Enum.any?(needles, &String.contains?(value, &1))
+  end
+
+  defp contains_any?(value, needles) when is_list(value) do
+    stringified = Enum.map(value, &to_string/1)
+    Enum.any?(needles, &(&1 in stringified))
+  end
+
+  defp contains_any?(value, needles) when is_map(value) do
+    vals = value |> Map.values() |> Enum.map(&to_string/1)
+    keys = value |> Map.keys() |> Enum.map(&to_string/1)
+    Enum.any?(needles, &(&1 in vals or &1 in keys))
+  end
+
+  defp contains_any?(_, _), do: false
 
   defp valid_date?(value) when is_binary(value) do
     cond do

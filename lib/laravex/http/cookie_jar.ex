@@ -8,6 +8,12 @@ defmodule Laravex.Http.CookieJar do
     :ok
   end
 
+  @doc "Queue a long-lived cookie (~400 days, Laravel `Cookie::forever`)."
+  def forever(name, value, opts \\ []) do
+    opts = Keyword.put_new(opts, :max_age, 576_000 * 60)
+    queue(name, value, opts)
+  end
+
   def queued, do: Process.get(@key, [])
 
   def forget(name) do

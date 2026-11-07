@@ -292,6 +292,11 @@ defmodule Laravex.Support.Helpers do
     value
   end
 
+  def cookie_forever(name, value, opts \\ []) do
+    Laravex.Http.CookieJar.forever(name, value, opts)
+    value
+  end
+
   def paginator_links(pager, path \\ "/"), do: Laravex.Http.Paginator.links(pager, path)
 
   def str, do: Laravex.Support.Str

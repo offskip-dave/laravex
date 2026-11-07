@@ -48,6 +48,8 @@ defmodule Laravex.Filesystem.Storage do
     File.exists?(Path.join(d.root, path))
   end
 
+  def missing?(path, disk \\ nil), do: not exists?(path, disk)
+
   def delete(path, disk \\ nil) do
     d = disk(disk)
     _ = File.rm(Path.join(d.root, path))
@@ -59,6 +61,31 @@ defmodule Laravex.Filesystem.Storage do
     case File.stat(Path.join(d.root, path)) do
       {:ok, %{size: size}} -> size
       _ -> 0
+    end
+  end
+
+  @doc "Last modification unix timestamp, or nil if missing (Laravel `lastModified`)."
+  def last_modified(path, disk \\ nil) do
+    d = disk(disk)
+
+    case File.stat(Path.join(d.root, path)) do
+      {:ok, %{mtime: {{_, _, _}, {_, _, _}} = erl}} ->
+        erl
+        |> NaiveDateTime.from_erl!()
+        |> DateTime.from_naive!("Etc/UTC")
+        |> DateTime.to_unix()
+
+      {:ok, %{mtime: %NaiveDateTime{} = ndt}} ->
+        DateTime.from_naive!(ndt, "Etc/UTC") |> DateTime.to_unix()
+
+      {:ok, %{mtime: %DateTime{} = dt}} ->
+        DateTime.to_unix(dt)
+
+      {:ok, %{mtime: n}} when is_integer(n) ->
+        n
+
+      _ ->
+        nil
     end
   end
 

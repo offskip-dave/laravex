@@ -91,6 +91,56 @@ defmodule Laravex.Http.Request do
     end
   end
 
+  def integer(%__MODULE__{} = request, key, default \\ 0) do
+    case input(request, key) do
+      v when is_integer(v) -> v
+      v when is_float(v) -> trunc(v)
+      v when is_binary(v) ->
+        case Integer.parse(String.trim(v)) do
+          {n, _} -> n
+          :error -> default
+        end
+      _ -> default
+    end
+  end
+
+  def float(%__MODULE__{} = request, key, default \\ 0.0) do
+    case input(request, key) do
+      v when is_float(v) -> v
+      v when is_integer(v) -> v * 1.0
+      v when is_binary(v) ->
+        case Float.parse(String.trim(v)) do
+          {n, _} -> n
+          :error -> default
+        end
+      _ -> default
+    end
+  end
+
+  def date(%__MODULE__{} = request, key, default \\ nil) do
+    case input(request, key) do
+      %Date{} = d -> d
+      %DateTime{} = dt -> DateTime.to_date(dt)
+      %NaiveDateTime{} = ndt -> NaiveDateTime.to_date(ndt)
+      v when is_binary(v) ->
+        case Date.from_iso8601(String.slice(String.trim(v), 0, 10)) do
+          {:ok, d} -> d
+          _ -> default
+        end
+      _ -> default
+    end
+  end
+
+  @doc "Call `fun` with the request when the key is present (Laravel `whenHas`)."
+  def when_has(%__MODULE__{} = request, key, fun) when is_function(fun, 1) do
+    if has?(request, key), do: fun.(request), else: request
+  end
+
+  @doc "Call `fun` with the request when the key is filled (Laravel `whenFilled`)."
+  def when_filled(%__MODULE__{} = request, key, fun) when is_function(fun, 1) do
+    if filled?(request, key), do: fun.(request), else: request
+  end
+
   @doc "Merge input into the request (Laravel `Request::merge`)."
   def merge(%__MODULE__{params: params} = request, values) when is_map(values) do
     %{request | params: Map.merge(params, stringify_keys(values))}
