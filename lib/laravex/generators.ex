@@ -2,17 +2,19 @@ defmodule Laravex.Generators do
   @moduledoc "Artisan make:* stub generators."
 
   def make_model(name, flags) do
+    table = Macro.underscore(name) <> "s"
+
     stub("Models", name, """
     defmodule App.Models.#{name} do
       defstruct [:id, :created_at, :updated_at]
-      use Laravex.Database.Model, table: "#{Macro.underscore(name)}s"
+      use Laravex.Database.Model, table: "#{table}"
       def fillable, do: []
       def casts, do: %{}
     end
     """)
 
     if "-m" in flags or "--migration" in flags do
-      make_migration("create_#{Macro.underscore(name)}s_table")
+      make_migration("create_#{table}_table", table: table)
     end
 
     if "-c" in flags or "--controller" in flags do
@@ -40,7 +42,8 @@ defmodule Laravex.Generators do
     """)
   end
 
-  def make_migration(name) do
+  def make_migration(name, opts \\ []) do
+    table = Keyword.get(opts, :table) || table_from_migration_name(name)
     ts = Calendar.strftime(DateTime.utc_now(), "%Y_%m_%d_%H%M%S")
     file = "#{ts}_#{name}.ex"
     mod = Macro.camelize(name)
@@ -49,7 +52,7 @@ defmodule Laravex.Generators do
     File.write!(path, """
     defmodule Database.Migrations.#{mod} do
       def up do
-        Laravex.Database.Schema.create("table_name", fn t ->
+        Laravex.Database.Schema.create("#{table}", fn t ->
           t
           |> Laravex.Database.Blueprint.id()
           |> Laravex.Database.Blueprint.timestamps()
@@ -57,7 +60,7 @@ defmodule Laravex.Generators do
       end
 
       def down do
-        Laravex.Database.Schema.drop_if_exists("table_name")
+        Laravex.Database.Schema.drop_if_exists("#{table}")
       end
     end
     """)
@@ -103,10 +106,11 @@ defmodule Laravex.Generators do
   end
 
   def make_command(name) do
-    stub_path = Path.join(Laravex.Foundation.Application.base_path(), "routes/console.ex")
-    IO.puts("Register `#{Macro.underscore(name)}` in routes/console.ex")
+    cmd = Macro.underscore(name)
+    File.mkdir_p!(Path.join(Laravex.Foundation.Application.base_path(), "app/Console"))
+
     File.write!(
-      Path.join(Laravex.Foundation.Application.base_path(), "app/Console/#{Macro.underscore(name)}.ex"),
+      Path.join(Laravex.Foundation.Application.base_path(), "app/Console/#{cmd}.ex"),
       """
       defmodule App.Console.#{name} do
         def handle(io), do: io.writeln.("#{name} command")
@@ -114,7 +118,30 @@ defmodule Laravex.Generators do
       """
     )
 
-    _ = stub_path
+    console = Path.join(Laravex.Foundation.Application.base_path(), "routes/console.ex")
+    contents = File.read!(console)
+
+    snippet = """
+
+        Router.command("#{cmd}", "#{name}", fn io ->
+          App.Console.#{name}.handle(io)
+        end)
+    """
+
+    marker = ~s(Router.command("#{cmd}")
+
+    unless String.contains?(contents, marker) do
+      updated =
+        if String.contains?(contents, "def register do") do
+          String.replace(contents, "def register do", "def register do" <> snippet, global: false)
+        else
+          contents <> "\n" <> snippet
+        end
+
+      File.write!(console, updated)
+    end
+
+    IO.puts("Command created: app/Console/#{cmd}.ex (registered in routes/console.ex)")
     :ok
   end
 
@@ -126,5 +153,17 @@ defmodule Laravex.Generators do
     File.write!(path, contents)
     IO.puts("Created: #{path}")
     :ok
+  end
+
+  defp table_from_migration_name(name) do
+    cond do
+      String.starts_with?(name, "create_") and String.ends_with?(name, "_table") ->
+        name
+        |> String.trim_leading("create_")
+        |> String.trim_trailing("_table")
+
+      true ->
+        Macro.underscore(name)
+    end
   end
 end

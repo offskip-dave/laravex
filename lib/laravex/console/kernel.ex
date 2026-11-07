@@ -132,8 +132,8 @@ defmodule Laravex.Console.Kernel do
   def cmd_schedule(_), do: Laravex.Console.Schedule.run()
 
   def cmd_tinker(_) do
-    IO.puts("Laravex Tinker (type Expr, Controllerc to exit)")
-    tinker_loop()
+    IO.puts("Laravex Tinker (exit/quit to leave)")
+    tinker_loop([])
   end
 
   def cmd_storage_link(_), do: (Laravex.Filesystem.Storage.link(); IO.puts("The links have been created."))
@@ -182,24 +182,34 @@ defmodule Laravex.Console.Kernel do
 
   defp usage(cmd, arg), do: IO.puts("Usage: artisan #{cmd} #{arg}")
 
-  defp tinker_loop do
+  defp tinker_loop(bindings) do
     case IO.gets(">>> ") do
-      :eof -> :ok
-      {:error, _} -> :ok
+      :eof ->
+        :ok
+
+      {:error, _} ->
+        :ok
+
       line ->
         line = String.trim(line)
 
         cond do
-          line in ["exit", "quit", ""] -> :ok
+          line in ["exit", "quit"] ->
+            :ok
+
+          line == "" ->
+            tinker_loop(bindings)
+
           true ->
             try do
-              {result, _} = Code.eval_string(line, [], modules: :erlang.loaded())
+              {result, new_bindings} = Code.eval_string(line, bindings)
               IO.inspect(result)
+              tinker_loop(Keyword.merge(bindings, new_bindings))
             rescue
-              e -> IO.puts(:stderr, Exception.message(e))
+              e ->
+                IO.puts(:stderr, Exception.message(e))
+                tinker_loop(bindings)
             end
-
-            tinker_loop()
         end
     end
   end

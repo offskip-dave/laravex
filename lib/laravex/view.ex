@@ -1,6 +1,6 @@
 defmodule Laravex.View do
   @moduledoc """
-  Blade-like view renderer: {{ }}, @csrf, @vite, @if, layouts via @extends/@section.
+  Blade-like view renderer: {{ }}, @csrf, @vite, @if, @foreach, @error, layouts.
   """
 
   def make(name, assigns \\ %{}) when is_binary(name) do
@@ -15,10 +15,13 @@ defmodule Laravex.View do
 
   def render_string(contents, assigns) do
     assigns = Map.new(assigns, fn {k, v} -> {to_string(k), v} end)
+
     contents
     |> apply_extends(assigns)
     |> replace_vite()
     |> replace_csrf(assigns)
+    |> replace_foreach(assigns)
+    |> replace_error(assigns)
     |> replace_directives(assigns)
     |> replace_echoes(assigns)
   end
@@ -89,6 +92,37 @@ defmodule Laravex.View do
     |> String.replace("{{ csrf_token() }}", token)
   end
 
+  defp replace_foreach(contents, assigns) do
+    Regex.replace(~r/@foreach\s*\(\s*\$?(\w+)\s+as\s+\$?(\w+)\s*\)(.*?)@endforeach/s, contents, fn _,
+                                                                                               list_key,
+                                                                                               item_key,
+                                                                                               body ->
+      list = get_in_assign(assigns, list_key) || []
+
+      list
+      |> List.wrap()
+      |> Enum.map_join(fn item ->
+        item_assigns = Map.put(assigns, item_key, item)
+        body |> replace_echoes(item_assigns) |> replace_directives(item_assigns)
+      end)
+    end)
+  end
+
+  defp replace_error(contents, assigns) do
+    errors = Map.get(assigns, "errors") || Map.get(assigns, :errors) || %{}
+
+    Regex.replace(~r/@error\(['"]([^'"]+)['"]\)(.*?)@enderror/s, contents, fn _, field, body ->
+      case Map.get(errors, field) || Map.get(errors, String.to_atom(field)) do
+        nil ->
+          ""
+
+        msgs ->
+          msg = List.wrap(msgs) |> List.first() |> to_string()
+          replace_echoes(body, Map.put(assigns, "message", msg))
+      end
+    end)
+  end
+
   defp replace_directives(contents, assigns) do
     Regex.replace(~r/@if\((.*?)\)(.*?)@endif/s, contents, fn _, expr, body ->
       if truthy?(eval_expr(expr, assigns)), do: body, else: ""
@@ -108,9 +142,21 @@ defmodule Laravex.View do
 
     Enum.reduce_while(parts, assigns, fn part, acc ->
       cond do
-        is_map(acc) and Map.has_key?(acc, part) -> {:cont, Map.get(acc, part)}
-        is_map(acc) and Map.has_key?(acc, String.to_atom(part)) -> {:cont, Map.get(acc, String.to_atom(part))}
-        true -> {:halt, ""}
+        is_map(acc) and Map.has_key?(acc, part) ->
+          {:cont, Map.get(acc, part)}
+
+        is_map(acc) and Map.has_key?(acc, String.to_atom(part)) ->
+          {:cont, Map.get(acc, String.to_atom(part))}
+
+        is_struct(acc) ->
+          try do
+            {:cont, Map.get(acc, String.to_atom(part))}
+          rescue
+            _ -> {:halt, ""}
+          end
+
+        true ->
+          {:halt, ""}
       end
     end)
   end
@@ -133,6 +179,7 @@ defmodule Laravex.View do
   defp truthy?(nil), do: false
   defp truthy?(false), do: false
   defp truthy?(""), do: false
+  defp truthy?([]), do: false
   defp truthy?(_), do: true
 
   defp html_escape(str) do
@@ -153,6 +200,7 @@ defmodule Laravex.Vite do
 
     if File.exists?(hot) do
       url = String.trim(File.read!(hot))
+
       Enum.map_join(assets, "\n", fn asset ->
         if String.ends_with?(asset, ".css") do
           ~s(<link rel="stylesheet" href="#{url}/#{asset}">)

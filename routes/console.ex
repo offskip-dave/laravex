@@ -11,6 +11,6 @@ defmodule Routes.Console do
       io.writeln.(Inspiring.quote_text())
     end)
 
-    Laravex.Console.Schedule.command("inspire", "everyMinute")
+    Laravex.Console.Schedule.command("inspire", "hourly")
   end
 end

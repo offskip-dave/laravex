@@ -11,6 +11,7 @@ defmodule Laravex.Application do
       Laravex.Cache.Manager,
       Laravex.Queue.Worker,
       Laravex.Events.Dispatcher,
+      Laravex.Broadcasting.Broadcaster,
       {Laravex.Foundation.Server, base_path: base_path}
     ]
 

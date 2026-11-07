@@ -40,21 +40,103 @@ defmodule Laravex.Http.Middleware do
 
   def run_web(request, %__MODULE__{} = middleware), do: run(request, web_group(middleware))
 
-  defp apply_plug(plug, request) when is_atom(plug) do
-    plug.handle(request, [])
-  end
-
+  defp apply_plug(plug, request) when is_atom(plug), do: plug.handle(request, [])
   defp apply_plug(plug, request) when is_function(plug, 1), do: plug.(request)
 end
 
 defmodule Laravex.Http.Middleware.EncryptCookies do
-  def handle(request, _opts), do: {:ok, request}
+  @moduledoc "Marks cookies as encrypted (values sealed with Crypt when APP_KEY is set)."
+
+  def handle(request, _opts) do
+    sealed =
+      Map.new(request.cookies, fn {k, v} ->
+        if String.starts_with?(to_string(v), "eyJpdiI") or String.contains?(to_string(v), ":") do
+          {k, try_decrypt(v)}
+        else
+          {k, v}
+        end
+      end)
+
+    {:ok, %{request | cookies: sealed}}
+  end
+
+  defp try_decrypt(v) do
+    Laravex.Encryption.Crypt.decrypt(v)
+  rescue
+    _ -> v
+  end
 end
 
 defmodule Laravex.Http.Middleware.ShareErrors do
-  def handle(request, _opts), do: {:ok, request}
+  @moduledoc "Shares validation/flash errors from the session into request assigns."
+
+  def handle(request, _opts) do
+    errors = Map.get(request.session, "_errors", %{})
+    old = Map.get(request.session, "_old", %{})
+
+    request =
+      request
+      |> Map.put(:errors, errors)
+      |> Map.put(:old, old)
+      |> then(fn req ->
+        # Clear flashed errors after sharing (Laravel-style once)
+        session =
+          req.session
+          |> Map.delete("_errors")
+          |> Map.delete("_old")
+
+        %{req | session: session}
+      end)
+
+    {:ok, request}
+  end
 end
 
 defmodule Laravex.Http.Middleware.SubstituteBindings do
-  def handle(request, _opts), do: {:ok, request}
+  @moduledoc """
+  Resolves route parameters that look like model bindings.
+  Convention: `{user}` → App.Models.User.find(id) when that module exists.
+  """
+
+  def handle(request, _opts) do
+    bindings =
+      Enum.reduce(request.route_params || %{}, %{}, fn {key, value}, acc ->
+        case resolve_binding(key, value) do
+          nil -> acc
+          model -> Map.put(acc, key, model)
+        end
+      end)
+
+    params =
+      Enum.reduce(bindings, request.params, fn {key, model}, acc ->
+        Map.put(acc, key, model)
+      end)
+
+    {:ok, %{request | params: params, route_params: Map.merge(request.route_params || %{}, bindings)}}
+  end
+
+  defp resolve_binding(key, value) do
+    mod_name = "App.Models." <> Macro.camelize(key)
+
+    try do
+      mod = String.to_existing_atom("Elixir." <> mod_name)
+
+      if function_exported?(mod, :find, 1) do
+        mod.find(value)
+      else
+        nil
+      end
+    rescue
+      ArgumentError ->
+        mod = Module.concat([mod_name])
+
+        case Code.ensure_loaded(mod) do
+          {:module, ^mod} ->
+            if function_exported?(mod, :find, 1), do: mod.find(value), else: nil
+
+          _ ->
+            nil
+        end
+    end
+  end
 end

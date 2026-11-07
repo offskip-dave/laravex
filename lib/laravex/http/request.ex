@@ -12,7 +12,9 @@ defmodule Laravex.Http.Request do
             session_id: nil,
             user: nil,
             expects_json: false,
-            route_params: %{}
+            route_params: %{},
+            errors: %{},
+            old: %{}
 
   def capture(method, path, headers \\ %{}, body \\ "") do
     {path, query} = split_path(path)

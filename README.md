@@ -32,13 +32,14 @@ mix test
 
 | Layer | Capabilities |
 |---|---|
-| Foundation | Container, HTTP/router (params, groups, resources), middleware pipeline, exceptions, logging |
-| Database | SQLite via `sqlite3` CLI, Schema/Blueprint, migrations, query builder, Eloquent-shaped models |
+| Foundation | Container, HTTP/router (params, groups, resources), middleware (session/CSRF/bindings), exceptions, logging |
+| Database | SQLite via `sqlite3` CLI, Schema/Blueprint, dynamic migrations, query builder, Eloquent models (relations/pagination) |
 | Auth web loop | Session, CSRF, session guard, validation / form requests, hashing, Crypt |
-| DX | `make:*`, migrate/seed, route:list, serve, tinker, testing helpers (`get`/`post`/`acting_as`/`assert_see`) |
+| DX | `make:*` (real table names), migrate/seed, route:list, serve, tinker REPL, `AGENTS.md` |
 | Services | Cache, database queue worker, mail (log/array), filesystem disks, `storage:link` |
-| Views | Blade-like `{{ }}`, `@csrf`, `@vite`, `@if`, `@extends`/`@section` |
-| Async | Events/listeners, notifications, task scheduling |
+| HTTP | Static files from `public/`, OTP `:json` |
+| Views | Blade-like `{{ }}`, `@csrf`, `@vite`, `@if`, `@foreach`, `@error`, layouts |
+| Async | Events/listeners, notifications, schedule (cron/`hourly`/`daily`), broadcasting bus |
 | Ecosystem | `install:api` (tokens), `install:broadcasting`, `install:starter-kit`, observability recorder |
 
 ## Layout
