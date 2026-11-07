@@ -835,11 +835,47 @@ defmodule Laravex.View do
       end)
     end)
     |> then(fn html ->
+      Regex.replace(~r/@switch\((.*?)\)(.*?)@endswitch/s, html, fn _, expr, body ->
+        evaluate_switch(expr, body, assigns)
+      end)
+    end)
+    |> then(fn html ->
       Regex.replace(~r/@if\((.*?)\)(.*?)@endif/s, html, fn _, expr, body ->
         evaluate_if_chain(expr, body, assigns)
       end)
     end)
   end
+
+  defp evaluate_switch(expr, body, assigns) do
+    switch_val = eval_expr(String.trim(expr), assigns)
+
+    cases =
+      Regex.scan(~r/@case\((.*?)\)(.*?)(?=@case\(|@default|\z)/s, body)
+
+    default =
+      case Regex.run(~r/@default(.*)\z/s, body) do
+        [_, content] -> strip_break(content)
+        _ -> ""
+      end
+
+    Enum.find_value(cases, default, fn [_, case_expr, content] ->
+      case_val = eval_expr(String.trim(case_expr), assigns)
+
+      if values_equal?(case_val, switch_val) do
+        strip_break(content)
+      else
+        nil
+      end
+    end)
+  end
+
+  defp strip_break(content) when is_binary(content) do
+    content
+    |> String.replace(~r/@break\s*/, "")
+    |> String.trim()
+  end
+
+  defp values_equal?(a, b), do: a == b or to_string(a) == to_string(b)
 
   defp evaluate_if_chain(first_expr, body, assigns) do
     segments =
@@ -936,6 +972,20 @@ defmodule Laravex.View do
 
       Map.has_key?(assigns, expr) ->
         Map.get(assigns, expr)
+
+      match?({_n, ""}, Integer.parse(expr)) ->
+        {n, ""} = Integer.parse(expr)
+        n
+
+      (String.starts_with?(expr, "'") and String.ends_with?(expr, "'")) or
+          (String.starts_with?(expr, "\"") and String.ends_with?(expr, "\"")) ->
+        String.slice(expr, 1, String.length(expr) - 2)
+
+      expr in ["true", "TRUE"] ->
+        true
+
+      expr in ["false", "FALSE", "null", "nil", "0", ""] ->
+        false
 
       true ->
         expr not in ["false", "null", "nil", "0", ""]

@@ -255,8 +255,16 @@ defmodule Laravex.Notifications.Notifiable do
         Laravex.Notifications.Notifiable.unread_for(model)
       end
 
+      def read_notifications(%__MODULE__{} = model) do
+        Laravex.Notifications.Notifiable.read_for(model)
+      end
+
       def mark_notification_as_read(%__MODULE__{} = model, id) do
         Laravex.Notifications.Notifiable.mark_as_read(model, id)
+      end
+
+      def mark_notification_as_unread(%__MODULE__{} = model, id) do
+        Laravex.Notifications.Notifiable.mark_as_unread(model, id)
       end
 
       def mark_notifications_as_read(%__MODULE__{} = model) do
@@ -285,6 +293,14 @@ defmodule Laravex.Notifications.Notifiable do
     |> Enum.map(&decode_row/1)
   end
 
+  def read_for(%{__struct__: mod, id: id}) do
+    query_for(mod, id)
+    |> Laravex.Database.Query.where_not_null("read_at")
+    |> Laravex.Database.Query.order_by_desc("created_at")
+    |> Laravex.Database.Query.get()
+    |> Enum.map(&decode_row/1)
+  end
+
   def mark_as_read(%{__struct__: mod, id: id}, notification_id) do
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
@@ -295,6 +311,22 @@ defmodule Laravex.Notifications.Notifiable do
         WHERE id = ? AND notifiable_type = ? AND notifiable_id = ?
         """,
         [now, now, to_string(notification_id), to_string(mod), id]
+      )
+    end
+
+    :ok
+  end
+
+  def mark_as_unread(%{__struct__: mod, id: id}, notification_id) do
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
+
+    if Laravex.Database.Schema.has_table?("notifications") do
+      Laravex.Database.Connection.execute(
+        """
+        UPDATE notifications SET read_at = NULL, updated_at = ?
+        WHERE id = ? AND notifiable_type = ? AND notifiable_id = ?
+        """,
+        [now, to_string(notification_id), to_string(mod), id]
       )
     end
 

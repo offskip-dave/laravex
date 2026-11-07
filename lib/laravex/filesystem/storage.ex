@@ -345,6 +345,16 @@ defmodule Laravex.Filesystem.Storage do
     Laravex.Http.Response.download(contents, filename, opts)
   end
 
+  @doc "HTTP response for a stored file, inline by default (Laravel `Storage::response`)."
+  def response(path, opts \\ []) do
+    opts =
+      opts
+      |> Keyword.put_new(:inline, true)
+      |> Keyword.put_new(:content_type, mime_type(path, Keyword.get(opts, :disk)))
+
+    download(path, opts)
+  end
+
   def link do
     links = Laravex.Config.Repository.get("filesystems.links", %{})
 

@@ -13,7 +13,7 @@ defmodule Laravex.TestCase do
   setup do
     Process.delete(:laravex_acting_as)
     Process.delete(:laravex_request)
-    Laravex.Foundation.Server.boot!()
+    _ = Laravex.Foundation.Server.boot!()
     :ok
   end
 

@@ -74,6 +74,9 @@ defmodule Laravex.Mail.Mailer do
     body = render_body(m)
     raw = Map.new(m)
 
+    attachments =
+      normalize_attachments(Map.get(raw, :attachments) || Map.get(raw, "attachments"))
+
     Map.merge(
       %{
         from_address: Map.get(from, "address") || Map.get(from, :address),
@@ -81,10 +84,12 @@ defmodule Laravex.Mail.Mailer do
         body: body,
         cc: Map.get(raw, :cc) || Map.get(raw, "cc"),
         bcc: Map.get(raw, :bcc) || Map.get(raw, "bcc"),
-        reply_to: Map.get(raw, :reply_to) || Map.get(raw, "reply_to") || Map.get(raw, :replyTo)
+        reply_to: Map.get(raw, :reply_to) || Map.get(raw, "reply_to") || Map.get(raw, :replyTo),
+        attachments: attachments
       },
-      raw
+      Map.drop(raw, [:attachments, "attachments"])
     )
+    |> Map.put(:attachments, attachments)
   end
 
   defp normalize(mod) when is_atom(mod) do
@@ -100,12 +105,39 @@ defmodule Laravex.Mail.Mailer do
           data: if(function_exported?(mod, :data, 0), do: mod.data(), else: %{}),
           cc: if(function_exported?(mod, :cc, 0), do: mod.cc(), else: nil),
           bcc: if(function_exported?(mod, :bcc, 0), do: mod.bcc(), else: nil),
-          reply_to: if(function_exported?(mod, :reply_to, 0), do: mod.reply_to(), else: nil)
+          reply_to: if(function_exported?(mod, :reply_to, 0), do: mod.reply_to(), else: nil),
+          attachments:
+            if(function_exported?(mod, :attachments, 0), do: mod.attachments(), else: [])
         }
       end
 
     normalize(data)
   end
+
+  defp normalize_attachments(nil), do: []
+  defp normalize_attachments(list) when is_list(list) do
+    Enum.map(list, fn
+      %{path: path} = att when is_binary(path) ->
+        %{
+          path: path,
+          name: Map.get(att, :name) || Map.get(att, "name") || Path.basename(path),
+          mime: Map.get(att, :mime) || Map.get(att, "mime") || Map.get(att, :mime_type)
+        }
+
+      path when is_binary(path) ->
+        %{path: path, name: Path.basename(path), mime: nil}
+
+      other when is_map(other) ->
+        path = Map.get(other, :path) || Map.get(other, "path")
+        %{path: path, name: Map.get(other, :name) || Map.get(other, "name"), mime: Map.get(other, :mime)}
+
+      _ ->
+        nil
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp normalize_attachments(other), do: normalize_attachments(List.wrap(other))
 
   defp render_body(%{body: body}) when is_binary(body) and body != "", do: body
 

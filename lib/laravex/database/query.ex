@@ -83,6 +83,13 @@ defmodule Laravex.Database.Query do
     %{q | joins: q.joins ++ [{:left, to_string(table), to_string(left), op, to_string(right)}]}
   end
 
+  @doc "RIGHT JOIN `table` ON `left` `op` `right`."
+  def right_join(%__MODULE__{} = q, table, left, right), do: right_join(q, table, left, "=", right)
+
+  def right_join(%__MODULE__{} = q, table, left, op, right) when is_binary(op) do
+    %{q | joins: q.joins ++ [{:right, to_string(table), to_string(left), op, to_string(right)}]}
+  end
+
   def where(%__MODULE__{} = q, column, value) do
     %{q | wheres: q.wheres ++ [{"#{column} = ?", value}], bindings: q.bindings ++ [value]}
   end
@@ -169,6 +176,20 @@ defmodule Laravex.Database.Query do
       %{
         q
         | wheres: q.wheres ++ [{:or, "#{column} IN (#{placeholders})", :in}],
+          bindings: q.bindings ++ values
+      }
+    end
+  end
+
+  def or_where_not_in(%__MODULE__{} = q, column, values) when is_list(values) do
+    if values == [] do
+      q
+    else
+      placeholders = Enum.map_join(values, ", ", fn _ -> "?" end)
+
+      %{
+        q
+        | wheres: q.wheres ++ [{:or, "#{column} NOT IN (#{placeholders})", :in}],
           bindings: q.bindings ++ values
       }
     end
@@ -537,6 +558,7 @@ defmodule Laravex.Database.Query do
     Enum.map_join(joins, "", fn
       {:inner, table, left, op, right} -> " INNER JOIN #{table} ON #{left} #{op} #{right}"
       {:left, table, left, op, right} -> " LEFT JOIN #{table} ON #{left} #{op} #{right}"
+      {:right, table, left, op, right} -> " RIGHT JOIN #{table} ON #{left} #{op} #{right}"
     end)
   end
 

@@ -132,6 +132,26 @@ defmodule Laravex.Support.Arr do
 
   def flatten(list) when is_list(list), do: List.flatten(list)
 
+  def map(list, fun) when is_list(list) and is_function(fun, 1), do: Enum.map(list, fun)
+
+  def map(map, fun) when is_map(map) and is_function(fun, 1) do
+    Map.new(map, fn {k, v} ->
+      case fun.({k, v}) do
+        {nk, nv} -> {nk, nv}
+        other -> {k, other}
+      end
+    end)
+  end
+
+  def map(map, fun) when is_map(map) and is_function(fun, 2) do
+    Map.new(map, fn {k, v} ->
+      case fun.(k, v) do
+        {nk, nv} -> {nk, nv}
+        other -> {k, other}
+      end
+    end)
+  end
+
   def pluck(list, key) when is_list(list) do
     Enum.map(list, fn
       map when is_map(map) -> get(map, key)
