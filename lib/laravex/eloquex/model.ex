@@ -17,6 +17,10 @@ defmodule Laravex.Eloquex.Model do
         Laravex.Eloquex.Model.first_or_create(__MODULE__, attrs, values)
       end
 
+      def first_or_new(attrs, values \\ %{}) do
+        Laravex.Eloquex.Model.first_or_new(__MODULE__, attrs, values)
+      end
+
       def update_or_create(attrs, values \\ %{}) do
         Laravex.Eloquex.Model.update_or_create(__MODULE__, attrs, values)
       end
@@ -74,6 +78,22 @@ defmodule Laravex.Eloquex.Model do
 
     case Laravex.Database.Query.first(q) do
       nil -> mod.create(Map.merge(attrs, values))
+      row -> mod.from_row(row)
+    end
+  end
+
+  @doc "Find by attributes or instantiate without saving (Laravel `firstOrNew`)."
+  def first_or_new(mod, attrs, values \\ %{}) do
+    attrs = Laravex.Database.Model.stringify(attrs)
+    values = Laravex.Database.Model.stringify(values)
+
+    q =
+      Enum.reduce(attrs, mod.query(), fn {k, v}, acc ->
+        Laravex.Database.Query.where(acc, k, v)
+      end)
+
+    case Laravex.Database.Query.first(q) do
+      nil -> mod.new(Map.merge(attrs, values))
       row -> mod.from_row(row)
     end
   end

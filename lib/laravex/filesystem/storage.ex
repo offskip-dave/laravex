@@ -38,6 +38,25 @@ defmodule Laravex.Filesystem.Storage do
     :ok
   end
 
+  @doc "Append contents to a file, creating it if missing (Laravel `append`)."
+  def append(path, contents, disk \\ nil) do
+    d = disk(disk)
+    full = Path.join(d.root, path)
+    File.mkdir_p!(Path.dirname(full))
+    File.write!(full, contents, [:append])
+    :ok
+  end
+
+  @doc "Prepend contents to a file, creating it if missing (Laravel `prepend`)."
+  def prepend(path, contents, disk \\ nil) do
+    d = disk(disk)
+    full = Path.join(d.root, path)
+    File.mkdir_p!(Path.dirname(full))
+    existing = if File.exists?(full), do: File.read!(full), else: ""
+    File.write!(full, to_string(contents) <> existing)
+    :ok
+  end
+
   def get(path, disk \\ nil) do
     d = disk(disk)
     File.read!(Path.join(d.root, path))
@@ -188,6 +207,13 @@ defmodule Laravex.Filesystem.Storage do
     collect_files(abs, directory)
   end
 
+  @doc "Recursively list directories (Laravel `allDirectories`)."
+  def all_directories(directory, disk \\ nil) do
+    d = disk(disk)
+    abs = Path.join(d.root, directory)
+    collect_directories(abs, directory)
+  end
+
   defp collect_files(abs, relative) do
     case File.ls(abs) do
       {:ok, entries} ->
@@ -199,6 +225,25 @@ defmodule Laravex.Filesystem.Storage do
             File.regular?(full) -> [rel]
             File.dir?(full) -> collect_files(full, rel)
             true -> []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp collect_directories(abs, relative) do
+    case File.ls(abs) do
+      {:ok, entries} ->
+        Enum.flat_map(entries, fn name ->
+          full = Path.join(abs, name)
+          rel = Path.join(relative, name) |> String.trim_leading("/")
+
+          if File.dir?(full) do
+            [rel | collect_directories(full, rel)]
+          else
+            []
           end
         end)
 

@@ -121,11 +121,59 @@ defmodule Laravex.Database.Query do
     end
   end
 
+  def where_not_in(%__MODULE__{} = q, column, values) when is_list(values) do
+    if values == [] do
+      q
+    else
+      placeholders = Enum.map_join(values, ", ", fn _ -> "?" end)
+
+      %{
+        q
+        | wheres: q.wheres ++ [{"#{column} NOT IN (#{placeholders})", :in}],
+          bindings: q.bindings ++ values
+      }
+    end
+  end
+
+  def or_where_in(%__MODULE__{} = q, column, values) when is_list(values) do
+    if values == [] do
+      %{q | wheres: q.wheres ++ [{:or, "1 = 0", :skip}]}
+    else
+      placeholders = Enum.map_join(values, ", ", fn _ -> "?" end)
+
+      %{
+        q
+        | wheres: q.wheres ++ [{:or, "#{column} IN (#{placeholders})", :in}],
+          bindings: q.bindings ++ values
+      }
+    end
+  end
+
   def where_between(%__MODULE__{} = q, column, low, high) do
     %{
       q
       | wheres: q.wheres ++ [{"#{column} BETWEEN ? AND ?", :between}],
         bindings: q.bindings ++ [low, high]
+    }
+  end
+
+  def where_not_between(%__MODULE__{} = q, column, low, high) do
+    %{
+      q
+      | wheres: q.wheres ++ [{"#{column} NOT BETWEEN ? AND ?", :between}],
+        bindings: q.bindings ++ [low, high]
+    }
+  end
+
+  def where_like(%__MODULE__{} = q, column, pattern) when is_binary(pattern) do
+    %{q | wheres: q.wheres ++ [{"#{column} LIKE ?", pattern}], bindings: q.bindings ++ [pattern]}
+  end
+
+  def or_where_like(%__MODULE__{} = q, column, pattern) when is_binary(pattern) do
+    %{
+      q
+      | wheres: q.wheres ++ [{:or, "#{column} LIKE ?", pattern}],
+        bindings: q.bindings ++ [pattern]
     }
   end
 

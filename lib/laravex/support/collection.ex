@@ -156,6 +156,16 @@ defmodule Laravex.Support.Collection do
     new(Enum.sort_by(items, fun))
   end
 
+  def sort_by_desc(%__MODULE__{} = c, key_or_fun) do
+    %__MODULE__{items: items} = sort_by(c, key_or_fun)
+    new(Enum.reverse(items))
+  end
+
+  def partition(%__MODULE__{items: items}, fun) when is_function(fun, 1) do
+    {pass, fail} = Enum.split_with(items, fun)
+    {new(pass), new(fail)}
+  end
+
   def first_where(%__MODULE__{} = c, key, value) do
     c |> where(key, value) |> first()
   end

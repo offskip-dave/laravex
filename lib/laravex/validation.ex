@@ -351,6 +351,15 @@ defmodule Laravex.Validation do
           do: [],
           else: ["The #{field} field must be a number."]
 
+      "decimal" ->
+        decimal_rule(field, value, nil)
+
+      "decimal:" <> rest ->
+        decimal_rule(field, value, rest)
+
+      "multiple_of:" <> n ->
+        multiple_of_rule(field, value, String.trim(n))
+
       "boolean" ->
         if value in [true, false, 1, 0, "1", "0", "true", "false", nil],
           do: [],
@@ -432,6 +441,9 @@ defmodule Laravex.Validation do
         end
 
       "mimes:" <> list ->
+        mime_ext_rule(field, value, list)
+
+      "extensions:" <> list ->
         mime_ext_rule(field, value, list)
 
       "mimetypes:" <> list ->
@@ -1279,6 +1291,78 @@ defmodule Laravex.Validation do
   end
 
   defp numeric?(_), do: false
+
+  defp decimal_rule(_field, value, _rest) when is_nil(value) or value == "", do: []
+
+  defp decimal_rule(field, value, rest) do
+    cond do
+      not numeric?(value) ->
+        ["The #{field} field must be a number."]
+
+      is_nil(rest) or rest == "" ->
+        []
+
+      true ->
+        case String.split(rest, ",") do
+          [min_places] ->
+            places = String.to_integer(String.trim(min_places))
+
+            if decimal_places(value) == places,
+              do: [],
+              else: ["The #{field} field must have #{places} decimal places."]
+
+          [min_places, max_places] ->
+            min_p = String.to_integer(String.trim(min_places))
+            max_p = String.to_integer(String.trim(max_places))
+            places = decimal_places(value)
+
+            if places >= min_p and places <= max_p,
+              do: [],
+              else: ["The #{field} field must have between #{min_p} and #{max_p} decimal places."]
+
+          _ ->
+            []
+        end
+    end
+  end
+
+  defp decimal_places(value) when is_integer(value), do: 0
+
+  defp decimal_places(value) when is_float(value) do
+    value
+    |> :erlang.float_to_binary([{:decimals, 10}])
+    |> String.trim_trailing("0")
+    |> then(fn s ->
+      case String.split(s, ".") do
+        [_, frac] -> String.length(frac)
+        _ -> 0
+      end
+    end)
+  end
+
+  defp decimal_places(value) when is_binary(value) do
+    case String.split(String.trim(value), ".") do
+      [_, frac] -> String.length(frac)
+      _ -> 0
+    end
+  end
+
+  defp multiple_of_rule(_field, value, _n) when is_nil(value) or value == "", do: []
+
+  defp multiple_of_rule(field, value, n) do
+    with true <- numeric?(value),
+         {divisor, _} <- Float.parse(n),
+         true <- divisor != 0 do
+      num = to_number(value) * 1.0
+      rem = :math.fmod(num, divisor)
+
+      if abs(rem) < 1.0e-9 or abs(abs(rem) - abs(divisor)) < 1.0e-9,
+        do: [],
+        else: ["The #{field} field must be a multiple of #{n}."]
+    else
+      _ -> ["The #{field} field must be a multiple of #{n}."]
+    end
+  end
 
   defp to_number(value) when is_integer(value), do: value
   defp to_number(value) when is_float(value), do: value

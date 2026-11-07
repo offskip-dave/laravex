@@ -107,6 +107,51 @@ defmodule Laravex.Support.Str do
     |> Enum.map_join(" ", &String.capitalize/1)
   end
 
+  @doc "APA-style title case (Laravel `Str::apa`)."
+  def apa(s) do
+    small =
+      MapSet.new([
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "but",
+        "by",
+        "for",
+        "in",
+        "nor",
+        "of",
+        "on",
+        "or",
+        "so",
+        "the",
+        "to",
+        "up",
+        "yet"
+      ])
+
+    words =
+      s
+      |> to_string()
+      |> String.replace(~r/[_-]+/, " ")
+      |> String.split(~r/\s+/, trim: true)
+
+    last = Enum.count(words) - 1
+
+    words
+    |> Enum.with_index()
+    |> Enum.map_join(" ", fn {word, idx} ->
+      lower = String.downcase(word)
+
+      if idx > 0 and idx < last and MapSet.member?(small, lower) do
+        lower
+      else
+        String.capitalize(lower)
+      end
+    end)
+  end
+
   def is_uuid?(s) when is_binary(s) do
     Regex.match?(
       ~r/\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\z/,
@@ -122,6 +167,18 @@ defmodule Laravex.Support.Str do
 
   def is_ulid?(_), do: false
 
+  def is_url?(s) when is_binary(s) do
+    case URI.parse(s) do
+      %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  def is_url?(_), do: false
+
   def is_json?(s) when is_binary(s) do
     match?({:ok, _}, Laravex.Support.JSON.decode(s))
   end
@@ -136,6 +193,25 @@ defmodule Laravex.Support.Str do
   end
 
   def is_mac_address?(_), do: false
+
+  @doc "Generate a random password (Laravel `Str::password`)."
+  def password(len \\ 32, opts \\ []) when is_integer(len) and len > 0 do
+    letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    numbers = "0123456789"
+    symbols = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+
+    alphabet =
+      letters <>
+        if(Keyword.get(opts, :numbers, true), do: numbers, else: "") <>
+        if(Keyword.get(opts, :symbols, true), do: symbols, else: "")
+
+    chars = String.graphemes(alphabet)
+    size = Enum.count(chars)
+
+    1..len
+    |> Enum.map(fn _ -> Enum.at(chars, :rand.uniform(size) - 1) end)
+    |> Enum.join()
+  end
 
   def is_ipv4?(s) when is_binary(s) do
     match?({:ok, _}, :inet.parse_ipv4_address(String.to_charlist(s)))
