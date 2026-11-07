@@ -131,6 +131,18 @@ defmodule Laravex.Session.Store do
     %{request | session_id: new_id}
   end
 
+  @doc "Clear all session data but keep the id (Laravel `flush`)."
+  def flush(%{session: _} = request) do
+    %{request | session: %{}, flash: %{}}
+  end
+
+  @doc "Flush session data and regenerate the id (Laravel `invalidate`)."
+  def invalidate(request) do
+    request
+    |> flush()
+    |> regenerate()
+  end
+
   def save(sid, session) when is_binary(sid) do
     ensure()
     driver = ensure_driver!()

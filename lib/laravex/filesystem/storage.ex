@@ -372,8 +372,35 @@ defmodule Laravex.Filesystem.Storage do
     :ok
   end
 
+  @doc "Set file visibility (Laravel `setVisibility`). Local: public=0644, private=0600."
+  def set_visibility(path, visibility, disk \\ nil) do
+    d = disk(disk)
+    apply_visibility(Path.join(d.root, path), visibility)
+  end
+
+  @doc "Get file visibility as `\"public\"` or `\"private\"` (Laravel `getVisibility`)."
+  def get_visibility(path, disk \\ nil) do
+    d = disk(disk)
+
+    case File.stat(Path.join(d.root, path)) do
+      {:ok, %{mode: mode}} ->
+        perms = Bitwise.band(mode, 0o777)
+        if Bitwise.band(perms, 0o004) != 0, do: "public", else: "private"
+
+      _ ->
+        nil
+    end
+  end
+
   defp apply_visibility(_full, nil), do: :ok
-  defp apply_visibility(_full, "public"), do: :ok
+
+  defp apply_visibility(full, "public") do
+    _ = File.chmod(full, 0o644)
+    :ok
+  rescue
+    _ -> :ok
+  end
+
   defp apply_visibility(full, :public), do: apply_visibility(full, "public")
 
   defp apply_visibility(full, "private") do

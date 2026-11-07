@@ -4,6 +4,25 @@ defmodule Laravex.View do
   components/slots, push/stack, and layouts.
   """
 
+  @shared_key :laravex_view_shared
+
+  @doc "Share data with all views (Laravel `View::share`)."
+  def share(key, value) do
+    share(%{to_string(key) => value})
+  end
+
+  def share(map) when is_map(map) do
+    merged = Map.merge(shared(), stringify_assigns(map))
+    :persistent_term.put(@shared_key, merged)
+    :ok
+  end
+
+  def shared do
+    :persistent_term.get(@shared_key, %{})
+  rescue
+    ArgumentError -> %{}
+  end
+
   def make(name, assigns \\ %{}) when is_binary(name) do
     Process.put(:laravex_stacks, %{})
     base = Laravex.Foundation.Application.base_path()
@@ -166,7 +185,7 @@ defmodule Laravex.View do
   defp blank_assign?(_), do: false
 
   defp merge_shared(assigns) do
-    shared =
+    request_shared =
       case Process.get(:laravex_request) do
         %{errors: errors, old: old, flash: flash, session: session} ->
           %{
@@ -190,7 +209,9 @@ defmodule Laravex.View do
           %{}
       end
 
-    Map.merge(shared, stringify_assigns(assigns))
+    shared()
+    |> Map.merge(request_shared)
+    |> Map.merge(stringify_assigns(assigns))
   end
 
   defp stringify_assigns(assigns) when is_map(assigns) do

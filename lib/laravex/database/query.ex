@@ -177,6 +177,33 @@ defmodule Laravex.Database.Query do
     }
   end
 
+  @doc "Compare the date portion of a column (SQLite `date()`)."
+  def where_date(%__MODULE__{} = q, column, value) do
+    date = normalize_sql_date(value)
+    %{q | wheres: q.wheres ++ [{"date(#{column}) = ?", date}], bindings: q.bindings ++ [date]}
+  end
+
+  def where_year(%__MODULE__{} = q, column, year) do
+    y = to_string(year)
+    %{q | wheres: q.wheres ++ [{"strftime('%Y', #{column}) = ?", y}], bindings: q.bindings ++ [y]}
+  end
+
+  def where_month(%__MODULE__{} = q, column, month) do
+    m = month |> to_string() |> String.pad_leading(2, "0")
+    %{q | wheres: q.wheres ++ [{"strftime('%m', #{column}) = ?", m}], bindings: q.bindings ++ [m]}
+  end
+
+  def where_day(%__MODULE__{} = q, column, day) do
+    d = day |> to_string() |> String.pad_leading(2, "0")
+    %{q | wheres: q.wheres ++ [{"strftime('%d', #{column}) = ?", d}], bindings: q.bindings ++ [d]}
+  end
+
+  defp normalize_sql_date(%Date{} = d), do: Date.to_iso8601(d)
+  defp normalize_sql_date(%DateTime{} = dt), do: DateTime.to_date(dt) |> Date.to_iso8601()
+  defp normalize_sql_date(%NaiveDateTime{} = ndt), do: NaiveDateTime.to_date(ndt) |> Date.to_iso8601()
+  defp normalize_sql_date(v) when is_binary(v), do: String.slice(v, 0, 10)
+  defp normalize_sql_date(v), do: to_string(v)
+
   def where_column(%__MODULE__{} = q, first, second), do: where_column(q, first, "=", second)
 
   def where_column(%__MODULE__{} = q, first, op, second) when is_binary(op) do

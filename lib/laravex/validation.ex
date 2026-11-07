@@ -619,6 +619,32 @@ defmodule Laravex.Validation do
            do: [],
            else: ["The #{field} field must end with one of the following: #{list}."]
 
+      "doesnt_start_with:" <> list ->
+        prefixes = String.split(list, ",")
+
+        if is_nil(value) or blank?(value) or
+             not Enum.any?(prefixes, &String.starts_with?(to_string(value), &1)),
+           do: [],
+           else: ["The #{field} field must not start with one of the following: #{list}."]
+
+      "doesnt_end_with:" <> list ->
+        suffixes = String.split(list, ",")
+
+        if is_nil(value) or blank?(value) or
+             not Enum.any?(suffixes, &String.ends_with?(to_string(value), &1)),
+           do: [],
+           else: ["The #{field} field must not end with one of the following: #{list}."]
+
+      "lowercase" ->
+        if is_nil(value) or blank?(value) or to_string(value) == String.downcase(to_string(value)),
+          do: [],
+          else: ["The #{field} field must be lowercase."]
+
+      "uppercase" ->
+        if is_nil(value) or blank?(value) or to_string(value) == String.upcase(to_string(value)),
+          do: [],
+          else: ["The #{field} field must be uppercase."]
+
       "size:" <> n ->
         size = String.to_integer(n)
 
