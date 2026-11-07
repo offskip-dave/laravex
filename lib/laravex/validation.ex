@@ -452,6 +452,15 @@ defmodule Laravex.Validation do
           do: [],
           else: ["The #{field} field must be an array."]
 
+      "required_array_keys:" <> rest ->
+        required_array_keys_rule(field, value, rest)
+
+      "doesnt_contain:" <> rest ->
+        does_not_contain_rule(field, value, rest)
+
+      "does_not_contain:" <> rest ->
+        does_not_contain_rule(field, value, rest)
+
       "filled" ->
         if blank?(value), do: ["The #{field} field must have a value."], else: []
 
@@ -929,6 +938,73 @@ defmodule Laravex.Validation do
           []
         end
       end)
+    end
+  end
+
+  defp required_array_keys_rule(field, value, rest) do
+    keys = rest |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+
+    cond do
+      is_nil(value) or blank?(value) ->
+        []
+
+      is_map(value) ->
+        missing =
+          Enum.reject(keys, fn k ->
+            Map.has_key?(value, k) or Map.has_key?(value, String.to_atom(k))
+          end)
+
+        if missing == [],
+          do: [],
+          else: ["The #{field} field must contain entries for: #{Enum.join(keys, ", ")}."]
+
+      is_list(value) ->
+        # Associative list of {k,v} pairs or list of required key names present as values
+        present =
+          value
+          |> Enum.flat_map(fn
+            {k, _} -> [to_string(k)]
+            k -> [to_string(k)]
+          end)
+
+        if Enum.all?(keys, &(&1 in present)),
+          do: [],
+          else: ["The #{field} field must contain entries for: #{Enum.join(keys, ", ")}."]
+
+      true ->
+        ["The #{field} field must be an array."]
+    end
+  end
+
+  defp does_not_contain_rule(field, value, rest) do
+    denied = rest |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+
+    cond do
+      is_nil(value) or blank?(value) ->
+        []
+
+      is_binary(value) ->
+        if Enum.any?(denied, &String.contains?(value, &1)),
+          do: ["The #{field} field contains a prohibited value."],
+          else: []
+
+      is_list(value) ->
+        stringified = Enum.map(value, &to_string/1)
+
+        if Enum.any?(denied, &(&1 in stringified)),
+          do: ["The #{field} field contains a prohibited value."],
+          else: []
+
+      is_map(value) ->
+        vals = value |> Map.values() |> Enum.map(&to_string/1)
+        keys = value |> Map.keys() |> Enum.map(&to_string/1)
+
+        if Enum.any?(denied, &(&1 in vals or &1 in keys)),
+          do: ["The #{field} field contains a prohibited value."],
+          else: []
+
+      true ->
+        []
     end
   end
 

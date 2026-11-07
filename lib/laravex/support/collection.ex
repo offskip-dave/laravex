@@ -295,6 +295,31 @@ defmodule Laravex.Support.Collection do
     end
   end
 
+  @doc "Cartesian product with another list/collection (Laravel `crossJoin`)."
+  def cross_join(%__MODULE__{items: items}, other) do
+    other_items =
+      case other do
+        %__MODULE__{items: o} -> o
+        enumerable -> Enum.to_list(enumerable)
+      end
+
+    new(
+      for a <- items, b <- other_items do
+        List.wrap(a) ++ List.wrap(b)
+      end
+    )
+  end
+
+  @doc "Sliding windows of `size` (Laravel `sliding`). Optional step defaults to 1."
+  def sliding(%__MODULE__{items: items}, size, step \\ 1)
+      when is_integer(size) and size > 0 and is_integer(step) and step > 0 do
+    new(
+      items
+      |> Enum.chunk_every(size, step, :discard)
+      |> Enum.map(&new/1)
+    )
+  end
+
   defp truthy?(v) when v in [false, nil, 0, "", "0"], do: false
   defp truthy?(_), do: true
 

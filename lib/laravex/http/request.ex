@@ -91,6 +91,27 @@ defmodule Laravex.Http.Request do
     end
   end
 
+  @doc "Merge input into the request (Laravel `Request::merge`)."
+  def merge(%__MODULE__{params: params} = request, values) when is_map(values) do
+    %{request | params: Map.merge(params, stringify_keys(values))}
+  end
+
+  @doc "Replace all request input (Laravel `Request::replace`)."
+  def replace(%__MODULE__{} = request, values) when is_map(values) do
+    %{request | params: stringify_keys(values)}
+  end
+
+  @doc "Merge only keys that are missing (Laravel `Request::mergeIfMissing`)."
+  def merge_if_missing(%__MODULE__{params: params} = request, values) when is_map(values) do
+    incoming =
+      values
+      |> stringify_keys()
+      |> Enum.reject(fn {k, _} -> Map.has_key?(params, k) end)
+      |> Map.new()
+
+    %{request | params: Map.merge(params, incoming)}
+  end
+
   def header(%__MODULE__{headers: headers}, key, default \\ nil) do
     Map.get(headers, String.downcase(to_string(key)), default)
   end

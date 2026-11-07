@@ -134,6 +134,48 @@ defmodule Laravex.Filesystem.Storage do
     end
   end
 
+  @doc """
+  Temporary signed URL for a stored path (Laravel `Storage::temporaryUrl`).
+
+  `expiration` may be seconds from now, a unix timestamp, or a `DateTime`.
+  """
+  def temporary_url(path, expiration, opts \\ []) do
+    disk_name = Keyword.get(opts, :disk, "public")
+    absolute = url(path, disk_name)
+    uri = URI.parse(absolute)
+    signed_path = uri.path || absolute
+
+    seconds =
+      case expiration do
+        %DateTime{} = dt ->
+          max(DateTime.to_unix(dt) - System.system_time(:second), 0)
+
+        n when is_integer(n) and n > 1_000_000_000 ->
+          max(n - System.system_time(:second), 0)
+
+        n when is_integer(n) ->
+          n
+      end
+
+    signed = Laravex.Http.UrlSigner.temporary(signed_path, seconds)
+
+    case uri do
+      %URI{scheme: scheme, host: host} when is_binary(scheme) and is_binary(host) ->
+        port =
+          cond do
+            is_nil(uri.port) -> ""
+            scheme == "http" and uri.port == 80 -> ""
+            scheme == "https" and uri.port == 443 -> ""
+            true -> ":#{uri.port}"
+          end
+
+        "#{scheme}://#{host}#{port}#{signed}"
+
+      _ ->
+        signed
+    end
+  end
+
   def path(path, disk_name \\ nil) do
     d = disk(disk_name)
     Path.join(d.root, path)

@@ -41,6 +41,19 @@ defmodule Laravex.Session.Store do
     %{request | session: Map.put(session, to_string(key), value)}
   end
 
+  def forget(%{session: session} = request, key) do
+    %{request | session: Map.delete(session, to_string(key))}
+  end
+
+  @doc "Get a value and remove it from the session (Laravel `session()->pull`)."
+  def pull(request, key, default \\ nil)
+
+  def pull(%{session: session} = request, key, default) do
+    k = to_string(key)
+    value = Map.get(session, k, default)
+    {value, %{request | session: Map.delete(session, k)}}
+  end
+
   @doc "Flash data for the *next* request (Laravel session()->flash)."
   def flash(request, key, value) do
     bag = flash_bag(request.session)
