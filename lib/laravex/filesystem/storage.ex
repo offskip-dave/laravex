@@ -87,24 +87,9 @@ defmodule Laravex.Filesystem.Storage do
   def last_modified(path, disk \\ nil) do
     d = disk(disk)
 
-    case File.stat(Path.join(d.root, path)) do
-      {:ok, %{mtime: {{_, _, _}, {_, _, _}} = erl}} ->
-        erl
-        |> NaiveDateTime.from_erl!()
-        |> DateTime.from_naive!("Etc/UTC")
-        |> DateTime.to_unix()
-
-      {:ok, %{mtime: %NaiveDateTime{} = ndt}} ->
-        DateTime.from_naive!(ndt, "Etc/UTC") |> DateTime.to_unix()
-
-      {:ok, %{mtime: %DateTime{} = dt}} ->
-        DateTime.to_unix(dt)
-
-      {:ok, %{mtime: n}} when is_integer(n) ->
-        n
-
-      _ ->
-        nil
+    case File.stat(Path.join(d.root, path), time: :posix) do
+      {:ok, %{mtime: n}} when is_integer(n) -> n
+      _ -> nil
     end
   end
 

@@ -4,23 +4,33 @@ defmodule Laravex.Auth.Guard do
   @remember_cookie "remember_web"
 
   def attempt(credentials, request) when is_map(credentials) do
+    remember? = truthy?(credentials["remember"] || credentials[:remember])
+
+    case validate_credentials(credentials) do
+      {:ok, user} ->
+        model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
+        password = credentials["password"] || credentials[:password]
+        user = maybe_rehash(user, password, model)
+        request = login(user, request, remember: remember?)
+        {:ok, user, request}
+
+      :error ->
+        {:error, :invalid}
+    end
+  end
+
+  @doc "Validate credentials without logging in (Laravel `validate`)."
+  def validate_credentials(credentials) when is_map(credentials) do
     email = credentials["email"] || credentials[:email]
     password = credentials["password"] || credentials[:password]
-    remember? = truthy?(credentials["remember"] || credentials[:remember])
     model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
 
     case model.find_by_email(email) do
       nil ->
-        {:error, :invalid}
+        :error
 
       user ->
-        if Laravex.Hashing.Hash.check(password, user.password) do
-          user = maybe_rehash(user, password, model)
-          request = login(user, request, remember: remember?)
-          {:ok, user, request}
-        else
-          {:error, :invalid}
-        end
+        if Laravex.Hashing.Hash.check(password, user.password), do: {:ok, user}, else: :error
     end
   end
 
@@ -34,6 +44,30 @@ defmodule Laravex.Auth.Guard do
       |> Map.put(:user, user)
 
     if remember?, do: issue_remember_cookie(user, request), else: request
+  end
+
+  def login_using_id(id, request, opts \\ []) do
+    model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
+
+    case model.find(id) do
+      nil -> {:error, :invalid}
+      user -> {:ok, user, login(user, request, opts)}
+    end
+  end
+
+  @doc "Log the user in for this request only (Laravel `once`)."
+  def once(user, request) do
+    Process.put(:laravex_acting_as, user)
+    %{request | user: user}
+  end
+
+  def once_using_id(id, request) do
+    model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
+
+    case model.find(id) do
+      nil -> {:error, :invalid}
+      user -> {:ok, user, once(user, request)}
+    end
   end
 
   def logout(request) do

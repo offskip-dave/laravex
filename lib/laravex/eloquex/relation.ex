@@ -149,6 +149,49 @@ defmodule Laravex.Eloquex.Relation do
       attach(rel, ids)
     end
 
+    @doc "Attach missing ids without detaching existing ones (Laravel `syncWithoutDetaching`)."
+    def sync_without_detaching(%__MODULE__{} = rel, ids) do
+      current = MapSet.new(related_ids(rel), &to_string/1)
+
+      List.wrap(ids)
+      |> Enum.reject(fn id -> MapSet.member?(current, to_string(id)) end)
+      |> then(&attach(rel, &1))
+    end
+
+    @doc "Toggle attachment of the given ids (Laravel `toggle`)."
+    def toggle(%__MODULE__{} = rel, ids) do
+      current = MapSet.new(related_ids(rel), &to_string/1)
+
+      {attach_ids, detach_ids} =
+        List.wrap(ids)
+        |> Enum.split_with(fn id -> not MapSet.member?(current, to_string(id)) end)
+
+      if detach_ids != [], do: detach(rel, detach_ids)
+      if attach_ids != [], do: attach(rel, attach_ids)
+      :ok
+    end
+
+    @doc "Update pivot attributes for a related id (Laravel `updateExistingPivot`)."
+    def update_existing_pivot(%__MODULE__{} = rel, id, attrs) when is_map(attrs) do
+      attrs = Laravex.Database.Model.stringify(attrs)
+      now = DateTime.utc_now() |> DateTime.to_iso8601()
+      attrs = Map.put_new(attrs, "updated_at", now)
+
+      sets =
+        attrs
+        |> Enum.map(fn {k, _} -> "#{k} = ?" end)
+        |> Enum.join(", ")
+
+      vals = Enum.map(attrs, fn {_, v} -> v end) ++ [rel.owner.id, id]
+
+      Laravex.Database.Connection.execute(
+        "UPDATE #{rel.pivot} SET #{sets} WHERE #{rel.foreign_key} = ? AND #{rel.related_key} = ?",
+        vals
+      )
+
+      :ok
+    end
+
     def count(%__MODULE__{} = rel), do: length(related_ids(rel))
 
     defp insert_pivot(pivot, attrs) when is_map(attrs) do

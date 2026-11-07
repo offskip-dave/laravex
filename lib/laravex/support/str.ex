@@ -132,27 +132,7 @@ defmodule Laravex.Support.Str do
 
   @doc "APA-style title case (Laravel `Str::apa`)."
   def apa(s) do
-    small =
-      MapSet.new([
-        "a",
-        "an",
-        "and",
-        "as",
-        "at",
-        "but",
-        "by",
-        "for",
-        "in",
-        "nor",
-        "of",
-        "on",
-        "or",
-        "so",
-        "the",
-        "to",
-        "up",
-        "yet"
-      ])
+    small = ~w(a an and as at but by for in nor of on or so the to up yet)
 
     words =
       s
@@ -167,7 +147,7 @@ defmodule Laravex.Support.Str do
     |> Enum.map_join(" ", fn {word, idx} ->
       lower = String.downcase(word)
 
-      if idx > 0 and idx < last and MapSet.member?(small, lower) do
+      if idx > 0 and idx < last and lower in small do
         lower
       else
         String.capitalize(lower)

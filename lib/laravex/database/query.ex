@@ -107,6 +107,31 @@ defmodule Laravex.Database.Query do
     %{q | wheres: q.wheres ++ [{"#{column} IS NOT NULL", :skip}]}
   end
 
+  def or_where_null(%__MODULE__{} = q, column) do
+    %{q | wheres: q.wheres ++ [{:or, "#{column} IS NULL", :skip}]}
+  end
+
+  def or_where_not_null(%__MODULE__{} = q, column) do
+    %{q | wheres: q.wheres ++ [{:or, "#{column} IS NOT NULL", :skip}]}
+  end
+
+  @doc "Add an EXISTS subquery (Laravel `whereExists`). `fun` receives a fresh Query."
+  def where_exists(%__MODULE__{} = q, fun) when is_function(fun, 1) do
+    sub = fun.(%__MODULE__{table: q.table, columns: ["1"]})
+    {clause, bindings} = to_where_sql(sub)
+    cols = Enum.join(sub.columns || ["1"], ", ")
+    sql = "EXISTS (SELECT #{cols} FROM #{sub.table}" <> if(clause == "", do: "", else: " WHERE " <> clause) <> ")"
+    %{q | wheres: q.wheres ++ [{sql, :raw}], bindings: q.bindings ++ bindings}
+  end
+
+  def or_where_exists(%__MODULE__{} = q, fun) when is_function(fun, 1) do
+    sub = fun.(%__MODULE__{table: q.table, columns: ["1"]})
+    {clause, bindings} = to_where_sql(sub)
+    cols = Enum.join(sub.columns || ["1"], ", ")
+    sql = "EXISTS (SELECT #{cols} FROM #{sub.table}" <> if(clause == "", do: "", else: " WHERE " <> clause) <> ")"
+    %{q | wheres: q.wheres ++ [{:or, sql, :raw}], bindings: q.bindings ++ bindings}
+  end
+
   def where_in(%__MODULE__{} = q, column, values) when is_list(values) do
     if values == [] do
       %{q | wheres: q.wheres ++ [{"1 = 0", :skip}]}
@@ -251,6 +276,14 @@ defmodule Laravex.Database.Query do
 
   def limit(%__MODULE__{} = q, n), do: %{q | limit: n}
   def offset(%__MODULE__{} = q, n), do: %{q | offset: n}
+
+  @doc "Paginate by page number (Laravel `forPage`). 1-based."
+  def for_page(%__MODULE__{} = q, page, per_page \\ 15)
+      when is_integer(page) and page >= 1 and is_integer(per_page) and per_page > 0 do
+    q
+    |> offset((page - 1) * per_page)
+    |> limit(per_page)
+  end
 
   def get(%__MODULE__{} = q) do
     Laravex.Database.Connection.query(to_sql(q), q.bindings)

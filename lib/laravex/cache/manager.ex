@@ -17,6 +17,17 @@ defmodule Laravex.Cache.Manager do
     GenServer.call(__MODULE__, {:get, to_string(key), default})
   end
 
+  @doc "Get many keys at once (Laravel `many` / `getMultiple`)."
+  def many(keys) when is_list(keys) do
+    Map.new(keys, fn key -> {to_string(key), get(key)} end)
+  end
+
+  @doc "Put many key/value pairs (Laravel `putMany` / `setMultiple`). Optional shared TTL."
+  def put_many(values, ttl \\ nil) when is_map(values) do
+    Enum.each(values, fn {k, v} -> put(k, v, ttl) end)
+    :ok
+  end
+
   def has?(key), do: get(key, :__missing__) != :__missing__
 
   @doc "Store value only if the key is missing. Returns true if stored."
@@ -239,7 +250,7 @@ defmodule Laravex.Cache.Manager do
         "storage/framework/cache/data/#{Base.encode16(key)}"
       )
 
-    if File.exists?(path), do: File.rm(path)
+    _ = if File.exists?(path), do: File.rm(path)
     :ok
   end
 

@@ -419,6 +419,12 @@ defmodule Laravex.Validation do
       "before:" <> other ->
         date_compare_rule(field, value, data, String.trim(other), :before)
 
+      "after_or_equal:" <> other ->
+        date_compare_rule(field, value, data, String.trim(other), :after_or_equal)
+
+      "before_or_equal:" <> other ->
+        date_compare_rule(field, value, data, String.trim(other), :before_or_equal)
+
       "file" ->
         case value do
           %Laravex.Http.UploadedFile{} -> []
@@ -544,10 +550,19 @@ defmodule Laravex.Validation do
           do: [],
           else: ["The #{field} must be accepted."]
 
+      "accepted_if:" <> rest ->
+        conditional_accepted(field, value, data, rest, :accepted)
+
       "declined" ->
         if value in [false, 0, "0", "false", "no", "off"],
           do: [],
           else: ["The #{field} must be declined."]
+
+      "declined_if:" <> rest ->
+        conditional_accepted(field, value, data, rest, :declined)
+
+      "distinct" ->
+        distinct_rule(field, value)
 
       "alpha" ->
         if is_nil(value) or blank?(value) or (is_binary(value) and Regex.match?(~r/^\p{L}+$/u, value)),
@@ -1428,15 +1443,22 @@ defmodule Laravex.Validation do
   defp date_compare_rule(field, value, data, other, op) do
     left = parse_comparable_date(value)
     right = parse_comparable_date(data_get(data, other) || other)
+    cmp = if left && right, do: Date.compare(left, right), else: nil
 
     cond do
-      is_nil(left) or is_nil(right) ->
+      is_nil(cmp) ->
         []
 
-      op == :after and Date.compare(left, right) == :gt ->
+      op == :after and cmp == :gt ->
         []
 
-      op == :before and Date.compare(left, right) == :lt ->
+      op == :before and cmp == :lt ->
+        []
+
+      op == :after_or_equal and cmp in [:gt, :eq] ->
+        []
+
+      op == :before_or_equal and cmp in [:lt, :eq] ->
         []
 
       op == :after ->
@@ -1445,10 +1467,54 @@ defmodule Laravex.Validation do
       op == :before ->
         ["The #{field} field must be a date before #{other}."]
 
+      op == :after_or_equal ->
+        ["The #{field} field must be a date after or equal to #{other}."]
+
+      op == :before_or_equal ->
+        ["The #{field} field must be a date before or equal to #{other}."]
+
       true ->
         []
     end
   end
+
+  defp conditional_accepted(field, value, data, rest, mode) do
+    case String.split(rest, ",", parts: 2) do
+      [other, expected] ->
+        other_val = to_string(data_get(data, String.trim(other)) || "")
+
+        if other_val == String.trim(expected) do
+          case mode do
+            :accepted ->
+              if value in [true, 1, "1", "true", "yes", "on"],
+                do: [],
+                else: ["The #{field} must be accepted."]
+
+            :declined ->
+              if value in [false, 0, "0", "false", "no", "off"],
+                do: [],
+                else: ["The #{field} must be declined."]
+          end
+        else
+          []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp distinct_rule(_field, value) when is_nil(value) or value == "", do: []
+
+  defp distinct_rule(field, value) when is_list(value) do
+    normalized = Enum.map(value, &to_string/1)
+
+    if length(normalized) == length(Enum.uniq(normalized)),
+      do: [],
+      else: ["The #{field} field has a duplicate value."]
+  end
+
+  defp distinct_rule(_field, _), do: []
 
   defp parse_comparable_date(%Date{} = d), do: d
   defp parse_comparable_date(%DateTime{} = d), do: DateTime.to_date(d)

@@ -4,6 +4,22 @@ defmodule Laravex.Support.Collection do
 
   def new(enumerable), do: %__MODULE__{items: Enum.to_list(enumerable)}
 
+  def wrap(nil), do: new([])
+  def wrap(%__MODULE__{} = c), do: c
+  def wrap(list) when is_list(list), do: new(list)
+  def wrap(other), do: new([other])
+
+  def map_with_keys(%__MODULE__{items: items}, fun) when is_function(fun, 1) do
+    new(
+      Enum.map(items, fn item ->
+        case fun.(item) do
+          {k, v} -> {k, v}
+          other -> other
+        end
+      end)
+    )
+  end
+
   def all(%__MODULE__{items: items}), do: items
   def count(%__MODULE__{items: items}), do: length(items)
   def first(%__MODULE__{items: [h | _]}), do: h

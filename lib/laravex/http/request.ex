@@ -92,6 +92,10 @@ defmodule Laravex.Http.Request do
     Map.has_key?(request.params, k) or Map.has_key?(request.params, key)
   end
 
+  def has_any?(%__MODULE__{} = request, keys) when is_list(keys) do
+    Enum.any?(keys, &has?(request, &1))
+  end
+
   def missing?(%__MODULE__{} = request, key), do: not has?(request, key)
 
   def filled?(%__MODULE__{} = request, key) do
@@ -178,6 +182,11 @@ defmodule Laravex.Http.Request do
   @doc "Call `fun` with the request when the key is filled (Laravel `whenFilled`)."
   def when_filled(%__MODULE__{} = request, key, fun) when is_function(fun, 1) do
     if filled?(request, key), do: fun.(request), else: request
+  end
+
+  @doc "Call `fun` with the request when the key is missing (Laravel `whenMissing`)."
+  def when_missing(%__MODULE__{} = request, key, fun) when is_function(fun, 1) do
+    if missing?(request, key), do: fun.(request), else: request
   end
 
   @doc "Merge input into the request (Laravel `Request::merge`)."
