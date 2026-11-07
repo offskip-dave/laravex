@@ -9,7 +9,7 @@ defmodule App.Providers.EventServiceProvider do
 
   def boot do
     Enum.each(listen(), fn {event, listeners} ->
-      Enum.each(List.wrap(listeners), fn listener ->
+      Enum.each(Laravex.Support.Arr.wrap(listeners), fn listener ->
         Laravex.Events.Dispatcher.listen(event, listener)
       end)
     end)

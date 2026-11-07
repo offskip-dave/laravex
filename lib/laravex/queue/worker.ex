@@ -141,14 +141,21 @@ defmodule Laravex.Queue.Worker do
       [System.system_time(:second), id]
     )
 
+    data =
+      case Laravex.Support.JSON.decode(payload) do
+        {:ok, decoded} -> decoded
+        _ -> %{}
+      end
+
     try do
-      {:ok, data} = Laravex.Support.JSON.decode(payload)
       job_mod = resolve_job_module(data["job"])
       args = data["args"] || []
-      job_mod.handle(args)
+      result = job_mod.handle(args)
+      Laravex.Observability.record_job(job_mod, result)
       Laravex.Database.Connection.execute("DELETE FROM jobs WHERE id = ?", [id])
     rescue
       e ->
+        Laravex.Observability.record_job(Map.get(data, "job"), {:error, Exception.message(e)})
         fail(job, e)
     end
   end

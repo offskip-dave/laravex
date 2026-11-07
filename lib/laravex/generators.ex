@@ -71,6 +71,74 @@ defmodule Laravex.Generators do
     IO.puts("Migration created: database/migrations/#{file}")
   end
 
+  def make_event(name) do
+    stub("Events", name, """
+    defmodule App.Events.#{name} do
+      defstruct [:payload]
+    end
+    """)
+  end
+
+  def make_listener(name, opts \\ []) do
+    stub("Listeners", name, """
+    defmodule App.Listeners.#{name} do
+      def handle(event), do: :ok
+    end
+    """)
+
+    case Keyword.get(opts, :event) do
+      event when is_binary(event) and event != "" ->
+        wire_event_listener(event, name)
+
+      _ ->
+        :ok
+    end
+  end
+
+  def wire_event_listener(event_name, listener_name) do
+    path =
+      Path.join(Laravex.Foundation.Application.base_path(), "app/Providers/event_service_provider.ex")
+
+    contents = File.read!(path)
+    event_mod = "App.Events.#{event_name}"
+    listener_mod = "App.Listeners.#{listener_name}"
+    entry = "      #{event_mod} => #{listener_mod},"
+
+    cond do
+      String.contains?(contents, entry) ->
+        :ok
+
+      String.contains?(contents, "def listen do\n    %{") ->
+        updated =
+          String.replace(
+            contents,
+            "def listen do\n    %{",
+            "def listen do\n    %{\n" <> entry,
+            global: false
+          )
+
+        File.write!(path, updated)
+        IO.puts("Registered #{listener_mod} for #{event_mod} in EventServiceProvider.")
+
+      String.contains?(contents, "def listen do\n    %{}") ->
+        updated =
+          String.replace(
+            contents,
+            "def listen do\n    %{}",
+            "def listen do\n    %{\n" <> entry <> "\n    }",
+            global: false
+          )
+
+        File.write!(path, updated)
+        IO.puts("Registered #{listener_mod} for #{event_mod} in EventServiceProvider.")
+
+      true ->
+        IO.puts(:stderr, "Could not auto-wire EventServiceProvider; add mapping manually.")
+    end
+
+    :ok
+  end
+
   def make_factory(name) do
     path =
       Path.join([

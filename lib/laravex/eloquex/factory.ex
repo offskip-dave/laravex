@@ -8,6 +8,10 @@ defmodule Laravex.Eloquex.Factory do
         def definition do
           %{"title" => "Hello"}
         end
+
+        defstate :draft do
+          %{"published" => false}
+        end
       end
   """
 
@@ -17,6 +21,8 @@ defmodule Laravex.Eloquex.Factory do
     quote do
       @eloquex_model unquote(model)
       Module.register_attribute(__MODULE__, :eloquex_states, accumulate: true)
+      import Laravex.Eloquex.Factory, only: [defstate: 2]
+      @before_compile Laravex.Eloquex.Factory
 
       def model, do: @eloquex_model
 
@@ -38,14 +44,6 @@ defmodule Laravex.Eloquex.Factory do
         |> then(fn attrs -> mod.create(attrs) end)
       end
 
-      def state(name) when is_atom(name) do
-        case Keyword.get(states(), name) do
-          nil -> %{}
-          fun when is_function(fun, 0) -> fun.()
-          map when is_map(map) -> map
-        end
-      end
-
       def make_state(name, attrs \\ %{}) do
         make(Map.merge(state(name), stringify(attrs)))
       end
@@ -54,11 +52,38 @@ defmodule Laravex.Eloquex.Factory do
         create(Map.merge(state(name), stringify(attrs)))
       end
 
-      def states, do: []
-
-      defoverridable definition: 0, states: 0, make: 0, make: 1, create: 0, create: 1
+      defoverridable definition: 0, make: 0, make: 1, create: 0, create: 1
 
       defp stringify(map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
+    end
+  end
+
+  defmacro __before_compile__(env) do
+    states = Module.get_attribute(env.module, :eloquex_states) || []
+
+    state_clauses =
+      Enum.map(states, fn {name, body} ->
+        quote do
+          def state(unquote(name)), do: unquote(body)
+        end
+      end)
+
+    quote do
+      unquote_splicing(state_clauses)
+      def state(_), do: %{}
+    end
+  end
+
+  @doc """
+  Register a named factory state.
+
+      defstate :unverified do
+        %{"email_verified_at" => nil}
+      end
+  """
+  defmacro defstate(name, do: body) do
+    quote do
+      @eloquex_states {unquote(name), unquote(Macro.escape(body))}
     end
   end
 end

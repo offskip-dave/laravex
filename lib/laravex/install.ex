@@ -79,6 +79,7 @@ defmodule Laravex.Install do
         <label>Email <input name="email" type="email" value="{{ old('email') }}"></label>
         @error('email')<div>{{ message }}</div>@enderror
         <label>Password <input name="password" type="password"></label>
+        <label><input name="remember" type="checkbox" value="1"> Remember me</label>
         <button type="submit">Sign in</button>
       </form>
       <p><a href="/forgot-password">Forgot password?</a></p>
@@ -128,7 +129,8 @@ defmodule Laravex.Install do
         case Laravex.Auth.Guard.attempt(
                %{
                  "email" => Laravex.Http.Request.input(request, "email"),
-                 "password" => Laravex.Http.Request.input(request, "password")
+                 "password" => Laravex.Http.Request.input(request, "password"),
+                 "remember" => Laravex.Http.Request.input(request, "remember")
                },
                request
              ) do

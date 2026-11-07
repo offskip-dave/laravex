@@ -5,8 +5,10 @@ defmodule Laravex.Http.Middleware do
 
   defstruct groups: %{
               "web" => [
+                Laravex.Http.Middleware.PreventRequestsDuringMaintenance,
                 Laravex.Http.Middleware.EncryptCookies,
                 Laravex.Http.Middleware.StartSession,
+                Laravex.Http.Middleware.AuthenticateSession,
                 Laravex.Http.Middleware.MethodOverride,
                 Laravex.Http.Middleware.ShareErrors,
                 Laravex.Http.Middleware.ShareFlash,
@@ -14,6 +16,7 @@ defmodule Laravex.Http.Middleware do
                 Laravex.Http.Middleware.SubstituteBindings
               ],
               "api" => [
+                Laravex.Http.Middleware.PreventRequestsDuringMaintenance,
                 Laravex.Http.Middleware.SubstituteBindings
               ]
             },
@@ -172,6 +175,30 @@ defmodule Laravex.Http.Middleware.EncryptCookies do
   end
 
   defp truthy?(v), do: v in [true, "true", 1, "1"]
+end
+
+defmodule Laravex.Http.Middleware.AuthenticateSession do
+  @moduledoc "Hydrate user from session or remember-me cookie; sync login_web."
+
+  def handle(request, _opts) do
+    user = request.user || Laravex.Auth.Guard.user(request)
+
+    request =
+      cond do
+        is_nil(user) ->
+          %{request | user: nil}
+
+        Map.get(request.session, "login_web") == user.id ->
+          %{request | user: user}
+
+        true ->
+          request
+          |> Laravex.Session.Store.put("login_web", user.id)
+          |> Map.put(:user, user)
+      end
+
+    {:ok, request}
+  end
 end
 
 defmodule Laravex.Http.Middleware.ShareErrors do

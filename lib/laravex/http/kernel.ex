@@ -11,7 +11,9 @@ defmodule Laravex.Http.Kernel do
 
         case Laravex.Http.Middleware.run(request, plugs) do
           {:halt, %Laravex.Http.Response{} = response} ->
-            terminate(plugs, request, response)
+            response = terminate(plugs, request, response)
+            maybe_record(request, response)
+            response
 
           {:ok, request} ->
             request =
@@ -37,9 +39,20 @@ defmodule Laravex.Http.Kernel do
                   )
               end
 
-            terminate(plugs, Process.get(:laravex_request, request), response)
+            response = terminate(plugs, Process.get(:laravex_request, request), response)
+            maybe_record(request, response)
+            response
         end
     end
+  end
+
+  defp maybe_record(request, response) do
+    if truthy?(Laravex.Config.Repository.get("app.debug", false)) or
+         Application.get_env(:laravex, :observability, false) do
+      Laravex.Observability.record_request(request, response)
+    end
+  rescue
+    _ -> :ok
   end
 
   def persist_session(%{session_id: sid, session: session}, response)
@@ -49,13 +62,41 @@ defmodule Laravex.Http.Kernel do
     encrypt? = truthy?(Laravex.Config.Repository.get("session.encrypt", false))
     value = if encrypt?, do: Laravex.Encryption.Crypt.encrypt(sid), else: sid
 
-    Laravex.Http.Response.with_cookie(response, name, value,
-      path: Laravex.Config.Repository.get("session.path", "/"),
-      http_only: truthy?(Laravex.Config.Repository.get("session.http_only", true))
-    )
+    response =
+      Laravex.Http.Response.with_cookie(response, name, value,
+        path: Laravex.Config.Repository.get("session.path", "/"),
+        http_only: truthy?(Laravex.Config.Repository.get("session.http_only", true))
+      )
+
+    attach_remember_cookie(response)
   end
 
-  def persist_session(_request, response), do: response
+  def persist_session(_request, response), do: attach_remember_cookie(response)
+
+  defp attach_remember_cookie(response) do
+    case Process.get(:laravex_remember_cookie) do
+      {value, true} when is_binary(value) and value != "" ->
+        Laravex.Http.Response.with_cookie(
+          response,
+          Laravex.Auth.Guard.remember_cookie_name(),
+          value,
+          max_age: 60 * 60 * 24 * 365,
+          http_only: true
+        )
+
+      {_, false} ->
+        Laravex.Http.Response.with_cookie(
+          response,
+          Laravex.Auth.Guard.remember_cookie_name(),
+          "",
+          max_age: 0,
+          http_only: true
+        )
+
+      _ ->
+        response
+    end
+  end
 
   defp terminate(plugs, request, response) do
     plugs

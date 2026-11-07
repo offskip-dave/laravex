@@ -1,9 +1,12 @@
 defmodule Laravex.Auth.Guard do
-  @moduledoc "Session authentication guard."
+  @moduledoc "Session authentication guard with remember-me and rehash-on-login."
+
+  @remember_cookie "remember_web"
 
   def attempt(credentials, request) when is_map(credentials) do
     email = credentials["email"] || credentials[:email]
     password = credentials["password"] || credentials[:password]
+    remember? = truthy?(credentials["remember"] || credentials[:remember])
     model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
 
     case model.find_by_email(email) do
@@ -12,7 +15,8 @@ defmodule Laravex.Auth.Guard do
 
       user ->
         if Laravex.Hashing.Hash.check(password, user.password) do
-          request = login(user, request)
+          user = maybe_rehash(user, password, model)
+          request = login(user, request, remember: remember?)
           {:ok, user, request}
         else
           {:error, :invalid}
@@ -20,23 +24,36 @@ defmodule Laravex.Auth.Guard do
     end
   end
 
-  def login(user, request) do
-    request
-    |> Laravex.Session.Store.regenerate()
-    |> Laravex.Session.Store.put("login_web", user.id)
-    |> Map.put(:user, user)
+  def login(user, request, opts \\ []) do
+    remember? = Keyword.get(opts, :remember, false)
+
+    request =
+      request
+      |> Laravex.Session.Store.regenerate()
+      |> Laravex.Session.Store.put("login_web", user.id)
+      |> Map.put(:user, user)
+
+    if remember?, do: issue_remember_cookie(user, request), else: request
   end
 
   def logout(request) do
+    user = user(request)
+
+    if user && Map.get(user, :remember_token) do
+      model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
+      model.save(%{user | remember_token: nil})
+    end
+
     request
     |> Laravex.Session.Store.put("login_web", nil)
     |> Laravex.Session.Store.regenerate()
+    |> clear_remember_cookie()
     |> Map.put(:user, nil)
   end
 
   def user(%{user: %{} = user}), do: user
 
-  def user(%{session: session}) do
+  def user(%{session: session} = request) do
     case Process.get(:laravex_acting_as) do
       %{id: _} = acting ->
         acting
@@ -44,7 +61,7 @@ defmodule Laravex.Auth.Guard do
       _ ->
         case Map.get(session, "login_web") do
           nil ->
-            nil
+            via_remember(request)
 
           id ->
             model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
@@ -73,6 +90,75 @@ defmodule Laravex.Auth.Guard do
   end
 
   def denies?(user, ability, resource \\ nil), do: not allows?(user, ability, resource)
+
+  def remember_cookie_name, do: @remember_cookie
+
+  defp maybe_rehash(user, password, model) do
+    if Laravex.Hashing.Hash.needs_rehash?(user.password) do
+      model.save(%{user | password: Laravex.Hashing.Hash.make(password)})
+    else
+      user
+    end
+  end
+
+  defp via_remember(request) do
+    case Map.get(request.cookies || %{}, @remember_cookie) do
+      nil ->
+        nil
+
+      raw ->
+        case decode_remember(raw) do
+          {id, token} ->
+            model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
+
+            case model.find(id) do
+              %{remember_token: ^token} = user when is_binary(token) and token != "" ->
+                user
+
+              _ ->
+                nil
+            end
+
+          _ ->
+            nil
+        end
+    end
+  end
+
+  defp issue_remember_cookie(user, request) do
+    model = Laravex.Config.Repository.get("auth.providers.users.model", App.Models.User)
+    token = Laravex.Support.Helpers.str_random(60)
+    user = model.save(%{user | remember_token: token})
+    value = encode_remember(user.id, token)
+    Process.put(:laravex_remember_cookie, {value, true})
+    %{request | user: user}
+  end
+
+  defp clear_remember_cookie(request) do
+    Process.put(:laravex_remember_cookie, {"", false})
+    request
+  end
+
+  defp encode_remember(id, token) do
+    Base.encode64("#{id}|#{token}")
+  end
+
+  defp decode_remember(raw) do
+    case Base.decode64(to_string(raw)) do
+      {:ok, decoded} ->
+        case String.split(decoded, "|", parts: 2) do
+          [id, token] -> {id, token}
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp truthy?(v), do: v in [true, "true", "1", 1, "on", "yes"]
 end
 
 defmodule Laravex.Auth.Gate do

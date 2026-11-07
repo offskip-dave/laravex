@@ -21,6 +21,9 @@ defmodule Laravex.Console.Kernel do
     "schedule:run" => {&__MODULE__.cmd_schedule/1, "Run due scheduled tasks"},
     "tinker" => {&__MODULE__.cmd_tinker/1, "Interact with the application"},
     "storage:link" => {&__MODULE__.cmd_storage_link/1, "Link public storage"},
+    "down" => {&__MODULE__.cmd_down/1, "Put the application into maintenance mode"},
+    "up" => {&__MODULE__.cmd_up/1, "Bring the application out of maintenance mode"},
+    "about" => {&__MODULE__.cmd_about/1, "Display basic application information"},
     "test" => {&__MODULE__.cmd_test/1, "Run the test suite"},
     "make:model" => {&__MODULE__.cmd_make_model/1, "Create a new model class"},
     "make:controller" => {&__MODULE__.cmd_make_controller/1, "Create a controller"},
@@ -151,6 +154,34 @@ defmodule Laravex.Console.Kernel do
   end
 
   def cmd_storage_link(_), do: (Laravex.Filesystem.Storage.link(); IO.puts("The links have been created."))
+
+  def cmd_down(args) do
+    opts = parse_down_opts(args)
+    Laravex.Foundation.Maintenance.down(opts)
+    IO.puts("Application is now in maintenance mode.")
+  end
+
+  def cmd_up(_) do
+    Laravex.Foundation.Maintenance.up()
+    IO.puts("Application is now live.")
+  end
+
+  def cmd_about(_) do
+    name = Laravex.Config.Repository.get("app.name", "Laravex")
+    env = Laravex.Config.Repository.get("app.env", "local")
+    debug = Laravex.Config.Repository.get("app.debug", false)
+    maintenance = Laravex.Foundation.Maintenance.enabled?()
+
+    IO.puts("""
+    #{name}
+      Environment ................ #{env}
+      Debug ...................... #{debug}
+      Maintenance ................ #{maintenance}
+      Elixir ..................... #{System.version()}
+      OTP ........................ #{:erlang.system_info(:otp_release)}
+    """)
+  end
+
   def cmd_test(_), do: Mix.Task.run("test")
 
   def cmd_make_model([name | rest]) do
@@ -165,10 +196,20 @@ defmodule Laravex.Console.Kernel do
   def cmd_make_migration(_), do: usage("make:migration", "name")
   def cmd_make_job([name | _]), do: Laravex.Generators.stub("Jobs", name, job_stub(name))
   def cmd_make_job(_), do: usage("make:job", "Name")
-  def cmd_make_event([name | _]), do: Laravex.Generators.stub("Events", name, event_stub(name))
+  def cmd_make_event([name | _]), do: Laravex.Generators.make_event(name)
   def cmd_make_event(_), do: usage("make:event", "Name")
-  def cmd_make_listener([name | _]), do: Laravex.Generators.stub("Listeners", name, listener_stub(name))
-  def cmd_make_listener(_), do: usage("make:listener", "Name")
+
+  def cmd_make_listener([name | rest]) do
+    event =
+      Enum.find_value(rest, fn
+        "--event=" <> e -> e
+        _ -> nil
+      end)
+
+    Laravex.Generators.make_listener(name, event: event)
+  end
+
+  def cmd_make_listener(_), do: usage("make:listener", "Name [--event=Event]")
   def cmd_make_mail([name | _]), do: Laravex.Generators.stub("Mail", name, mail_stub(name))
   def cmd_make_mail(_), do: usage("make:mail", "Name")
   def cmd_make_notification([name | _]), do: Laravex.Generators.stub("Notifications", name, notification_stub(name))
@@ -197,6 +238,15 @@ defmodule Laravex.Console.Kernel do
   def cmd_install_starter(_), do: Laravex.Install.starter_kit()
 
   defp usage(cmd, arg), do: IO.puts("Usage: artisan #{cmd} #{arg}")
+
+  defp parse_down_opts(args) do
+    Enum.reduce(args, [], fn
+      "--message=" <> msg, acc -> Keyword.put(acc, :message, msg)
+      "--retry=" <> n, acc -> Keyword.put(acc, :retry, String.to_integer(n))
+      "--secret=" <> s, acc -> Keyword.put(acc, :secret, s)
+      _, acc -> acc
+    end)
+  end
 
   defp tinker_loop(bindings) do
     case IO.gets(">>> ") do
@@ -245,18 +295,6 @@ defmodule Laravex.Console.Kernel do
     def handle(args) do
       {:ok, args}
     end
-  end
-  """
-
-  defp event_stub(name), do: """
-  defmodule App.Events.#{name} do
-    defstruct [:payload]
-  end
-  """
-
-  defp listener_stub(name), do: """
-  defmodule App.Listeners.#{name} do
-    def handle(event), do: :ok
   end
   """
 

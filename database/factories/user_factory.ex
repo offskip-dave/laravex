@@ -13,10 +13,8 @@ defmodule Database.Factories.UserFactory do
     }
   end
 
-  def states do
-    [
-      unverified: fn -> %{"email_verified_at" => nil} end
-    ]
+  defstate :unverified do
+    %{"email_verified_at" => nil}
   end
 
   def unverified(attrs \\ %{}), do: make_state(:unverified, attrs)
