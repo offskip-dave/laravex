@@ -15,6 +15,22 @@ defmodule Laravex.Support.Helpers do
 
   def resource_path(join \\ ""), do: Path.join(base_path("resources"), join)
 
+  @doc "Absolute or rooted URL for a public asset path."
+  def asset(path) when is_binary(path) do
+    app_url = Laravex.Config.Repository.get("app.url") || Laravex.Env.get("APP_URL", "")
+    path = "/" <> String.trim_leading(path, "/")
+
+    if is_binary(app_url) and app_url != "" do
+      String.trim_trailing(app_url, "/") <> path
+    else
+      path
+    end
+  end
+
+  def storage_url(path, disk \\ "public") when is_binary(path) do
+    Laravex.Filesystem.Storage.url(path, disk)
+  end
+
   def database_path(join \\ ""), do: Path.join(base_path("database"), join)
 
   def now, do: DateTime.utc_now()

@@ -44,6 +44,18 @@ defmodule Laravex.Eloquex.Factory do
         |> then(fn attrs -> mod.create(attrs) end)
       end
 
+      def count(n, attrs \\ %{}) when is_integer(n) and n >= 0 do
+        if n == 0, do: [], else: Enum.map(1..n, fn _ -> create(attrs) end)
+      end
+
+      def make_many(n, attrs \\ %{}) when is_integer(n) and n >= 0 do
+        if n == 0, do: [], else: Enum.map(1..n, fn _ -> make(attrs) end)
+      end
+
+      def sequence(name \\ "default") do
+        Laravex.Eloquex.Factory.next_sequence({__MODULE__, to_string(name)})
+      end
+
       def make_state(name, attrs \\ %{}) do
         make(Map.merge(state(name), stringify(attrs)))
       end
@@ -56,6 +68,20 @@ defmodule Laravex.Eloquex.Factory do
 
       defp stringify(map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
     end
+  end
+
+  def next_sequence(key) do
+    table = :laravex_factory_seq
+
+    if :ets.whereis(table) == :undefined do
+      try do
+        :ets.new(table, [:named_table, :public, :set])
+      rescue
+        ArgumentError -> :ok
+      end
+    end
+
+    :ets.update_counter(table, key, {2, 1}, {key, 0})
   end
 
   defmacro __before_compile__(env) do

@@ -2,9 +2,44 @@ defmodule Laravex.Http.Paginator do
   @moduledoc "LengthAwarePaginator helpers for Blade and JSON link generation."
 
   def links(pager, path \\ nil) when is_map(pager) do
+    if Map.get(pager, :simple) || Map.get(pager, "simple") do
+      simple_links(pager, path)
+    else
+      page = current_page(pager)
+      last = last_page(pager)
+      path = path || pager_path(pager)
+
+      prev =
+        if page > 1 do
+          ~s(<a href="#{page_url(pager, page - 1, path)}">&laquo; Previous</a>)
+        else
+          ~s(<span class="disabled">&laquo; Previous</span>)
+        end
+
+      next =
+        if page < last do
+          ~s(<a href="#{page_url(pager, page + 1, path)}">Next &raquo;</a>)
+        else
+          ~s(<span class="disabled">Next &raquo;</span>)
+        end
+
+      nums =
+        elements(page, last)
+        |> Enum.map(fn
+          :ellipsis -> ~s(<span class="ellipsis">&hellip;</span>)
+          n when n == page -> ~s(<span class="current">#{n}</span>)
+          n -> ~s(<a href="#{page_url(pager, n, path)}">#{n}</a>)
+        end)
+        |> Enum.join(" ")
+
+      ~s(<nav class="pagination">#{prev} #{nums} #{next}</nav>)
+    end
+  end
+
+  def simple_links(pager, path \\ nil) when is_map(pager) do
     page = current_page(pager)
-    last = last_page(pager)
     path = path || pager_path(pager)
+    has_more = Map.get(pager, :has_more_pages) || Map.get(pager, "has_more_pages") || false
 
     prev =
       if page > 1 do
@@ -14,22 +49,13 @@ defmodule Laravex.Http.Paginator do
       end
 
     next =
-      if page < last do
+      if has_more do
         ~s(<a href="#{page_url(pager, page + 1, path)}">Next &raquo;</a>)
       else
         ~s(<span class="disabled">Next &raquo;</span>)
       end
 
-    nums =
-      elements(page, last)
-      |> Enum.map(fn
-        :ellipsis -> ~s(<span class="ellipsis">&hellip;</span>)
-        n when n == page -> ~s(<span class="current">#{n}</span>)
-        n -> ~s(<a href="#{page_url(pager, n, path)}">#{n}</a>)
-      end)
-      |> Enum.join(" ")
-
-    ~s(<nav class="pagination">#{prev} #{nums} #{next}</nav>)
+    ~s(<nav class="pagination">#{prev} #{next}</nav>)
   end
 
   @doc "Build `path?…&page=n` preserving extra query params from the pager."

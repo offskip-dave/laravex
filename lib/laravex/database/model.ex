@@ -154,6 +154,10 @@ defmodule Laravex.Database.Model do
         Laravex.Database.Model.paginate(__MODULE__, per_page, page, opts)
       end
 
+      def simple_paginate(per_page \\ 15, page \\ 1, opts \\ []) do
+        Laravex.Database.Model.simple_paginate(__MODULE__, per_page, page, opts)
+      end
+
       def has_many(name, related, foreign_key \\ nil) do
         foreign_key =
           foreign_key || Macro.underscore(__MODULE__ |> Module.split() |> List.last()) <> "_id"
@@ -292,15 +296,52 @@ defmodule Laravex.Database.Model do
       |> Map.new(fn {k, v} -> {to_string(k), v} end)
       |> Map.delete("page")
 
-    %{
+    pager = %{
       data: data,
       total: total,
       per_page: per_page,
       current_page: page,
       last_page: max(1, ceil(total / max(per_page, 1))),
       path: path,
-      query: query
+      query: query,
+      simple: false
     }
+
+    Map.put(pager, :links, Laravex.Http.Paginator.links(pager, path))
+  end
+
+  def simple_paginate(mod, per_page, page, opts \\ []) when page >= 1 do
+    offset = (page - 1) * per_page
+
+    rows =
+      mod.query()
+      |> Laravex.Database.Query.limit(per_page + 1)
+      |> Laravex.Database.Query.offset(offset)
+      |> Laravex.Database.Query.get()
+
+    has_more = length(rows) > per_page
+    data = rows |> Enum.take(per_page) |> Enum.map(&mod.from_row/1)
+    path = Keyword.get(opts, :path, "/")
+
+    query =
+      opts
+      |> Keyword.get(:query, %{})
+      |> Map.new(fn {k, v} -> {to_string(k), v} end)
+      |> Map.delete("page")
+
+    pager = %{
+      data: data,
+      per_page: per_page,
+      current_page: page,
+      has_more_pages: has_more,
+      path: path,
+      query: query,
+      simple: true,
+      # for Paginator.links prev/next without last_page math
+      last_page: if(has_more, do: page + 1, else: page)
+    }
+
+    Map.put(pager, :links, Laravex.Http.Paginator.simple_links(pager, path))
   end
 
   def with_relations(models, owner_mod, relations) do

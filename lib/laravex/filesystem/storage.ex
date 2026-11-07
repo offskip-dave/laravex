@@ -1,5 +1,5 @@
 defmodule Laravex.Filesystem.Storage do
-  @moduledoc "Filesystem disks facade."
+  @moduledoc "Filesystem disks facade (local driver)."
 
   def disk(name \\ nil) do
     name = name || Laravex.Config.Repository.get("filesystems.default", "local")
@@ -23,11 +23,18 @@ defmodule Laravex.Filesystem.Storage do
     :ok
   end
 
-  def put(path, contents, disk \\ nil) do
+  def put(path, contents, disk \\ nil, opts \\ []) do
     d = disk(disk)
     full = Path.join(d.root, path)
     File.mkdir_p!(Path.dirname(full))
     File.write!(full, contents)
+
+    visibility =
+      Keyword.get(opts, :visibility) ||
+        Map.get(d.cfg, "visibility") ||
+        Map.get(d.cfg, :visibility)
+
+    apply_visibility(full, visibility)
     :ok
   end
 
@@ -44,6 +51,55 @@ defmodule Laravex.Filesystem.Storage do
   def delete(path, disk \\ nil) do
     d = disk(disk)
     File.rm(Path.join(d.root, path))
+    :ok
+  end
+
+  def size(path, disk \\ nil) do
+    d = disk(disk)
+    case File.stat(Path.join(d.root, path)) do
+      {:ok, %{size: size}} -> size
+      _ -> 0
+    end
+  end
+
+  def copy(from, to, disk \\ nil) do
+    d = disk(disk)
+    src = Path.join(d.root, from)
+    dest = Path.join(d.root, to)
+    File.mkdir_p!(Path.dirname(dest))
+    File.cp!(src, dest)
+    :ok
+  end
+
+  def move(from, to, disk \\ nil) do
+    d = disk(disk)
+    src = Path.join(d.root, from)
+    dest = Path.join(d.root, to)
+    File.mkdir_p!(Path.dirname(dest))
+    case File.rename(src, dest) do
+      :ok -> :ok
+      {:error, reason} -> raise File.Error, reason: reason, action: "rename", path: src
+    end
+  end
+
+  def files(directory, disk \\ nil) do
+    d = disk(disk)
+    dir = Path.join(d.root, directory)
+
+    case File.ls(dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.filter(fn name -> File.regular?(Path.join(dir, name)) end)
+        |> Enum.map(fn name -> Path.join(directory, name) |> String.trim_leading("/") end)
+
+      _ ->
+        []
+    end
+  end
+
+  def delete_directory(directory, disk \\ nil) do
+    d = disk(disk)
+    File.rm_rf(Path.join(d.root, directory))
     :ok
   end
 
@@ -83,6 +139,13 @@ defmodule Laravex.Filesystem.Storage do
     Path.join(d.root, path)
   end
 
+  def download(path, opts \\ []) do
+    disk_name = Keyword.get(opts, :disk)
+    filename = Keyword.get(opts, :as) || Path.basename(path)
+    contents = get(path, disk_name)
+    Laravex.Http.Response.download(contents, filename, opts)
+  end
+
   def link do
     links = Laravex.Config.Repository.get("filesystems.links", %{})
 
@@ -94,6 +157,21 @@ defmodule Laravex.Filesystem.Storage do
 
     :ok
   end
+
+  defp apply_visibility(_full, nil), do: :ok
+  defp apply_visibility(_full, "public"), do: :ok
+  defp apply_visibility(full, :public), do: apply_visibility(full, "public")
+
+  defp apply_visibility(full, "private") do
+    # Best-effort local permission bit (ignored on some platforms / sandboxes)
+    File.chmod(full, 0o600)
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp apply_visibility(full, :private), do: apply_visibility(full, "private")
+  defp apply_visibility(_, _), do: :ok
 
   defp storage_root("public"),
     do: Path.join(Laravex.Foundation.Application.base_path(), "storage/app/public")

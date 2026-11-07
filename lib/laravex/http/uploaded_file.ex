@@ -26,6 +26,12 @@ defmodule Laravex.Http.UploadedFile do
       String.starts_with?(to_string(file.content_type || ""), "image/")
   end
 
+  def mime_type(%__MODULE__{content_type: type}) when is_binary(type), do: type
+  def mime_type(_), do: "application/octet-stream"
+
+  def size_kb(%__MODULE__{size: size}) when is_integer(size), do: div(size, 1024)
+  def size_kb(_), do: 0
+
   def store(%__MODULE__{} = file, directory \\ "", disk \\ "public") do
     Laravex.Filesystem.Storage.store(file, directory, disk)
   end

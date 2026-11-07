@@ -136,35 +136,21 @@ defmodule Laravex.Validation do
               else: ["The #{field} confirmation does not match."]
 
           "min:" <> n ->
-            min = String.to_integer(n)
-
-            cond do
-              is_binary(value) and String.length(value) < min ->
-                ["The #{field} field must be at least #{min} characters."]
-
-              is_integer(value) and value < min ->
-                ["The #{field} field must be at least #{min}."]
-
-              true ->
-                []
-            end
+            min_rule(field, value, String.to_integer(n))
 
           "max:" <> n ->
-            max = String.to_integer(n)
-
-            cond do
-              is_binary(value) and String.length(value) > max ->
-                ["The #{field} field must not be greater than #{max} characters."]
-
-              true ->
-                []
-            end
+            max_rule(field, value, String.to_integer(n))
 
           "integer" ->
             if is_nil(value) or is_integer(value) or
                  (is_binary(value) and match?({_, ""}, Integer.parse(value))),
                do: [],
                else: ["The #{field} field must be an integer."]
+
+          "numeric" ->
+            if is_nil(value) or numeric?(value),
+              do: [],
+              else: ["The #{field} field must be a number."]
 
           "boolean" ->
             if value in [true, false, 1, 0, "1", "0", "true", "false", nil],
@@ -173,6 +159,27 @@ defmodule Laravex.Validation do
 
           "nullable" ->
             []
+
+          "present" ->
+            if field_present?(data, field),
+              do: [],
+              else: ["The #{field} field must be present."]
+
+          "url" ->
+            if is_nil(value) or blank?(value) or valid_url?(value),
+              do: [],
+              else: ["The #{field} field must be a valid URL."]
+
+          "uuid" ->
+            if is_nil(value) or blank?(value) or valid_uuid?(value),
+              do: [],
+              else: ["The #{field} field must be a valid UUID."]
+
+          "after:" <> other ->
+            date_compare_rule(field, value, data, String.trim(other), :after)
+
+          "before:" <> other ->
+            date_compare_rule(field, value, data, String.trim(other), :before)
 
           "file" ->
             case value do
@@ -194,6 +201,12 @@ defmodule Laravex.Validation do
               _ ->
                 ["The #{field} field must be an image."]
             end
+
+          "mimes:" <> list ->
+            mime_ext_rule(field, value, list)
+
+          "mimetypes:" <> list ->
+            mimetype_rule(field, value, list)
 
           "in:" <> list ->
             allowed = String.split(list, ",")
@@ -481,6 +494,174 @@ defmodule Laravex.Validation do
   defp blank?(nil), do: true
   defp blank?(""), do: true
   defp blank?(_), do: false
+
+  defp min_rule(field, %Laravex.Http.UploadedFile{size: size}, min) when is_integer(size) do
+    # Laravel max/min for files are kilobytes
+    if div(size, 1024) < min,
+      do: ["The #{field} must be at least #{min} kilobytes."],
+      else: []
+  end
+
+  defp min_rule(field, value, min) do
+    cond do
+      is_binary(value) and String.length(value) < min ->
+        ["The #{field} field must be at least #{min} characters."]
+
+      is_integer(value) and value < min ->
+        ["The #{field} field must be at least #{min}."]
+
+      numeric?(value) and to_number(value) < min ->
+        ["The #{field} field must be at least #{min}."]
+
+      true ->
+        []
+    end
+  end
+
+  defp max_rule(field, %Laravex.Http.UploadedFile{size: size}, max) when is_integer(size) do
+    if div(size, 1024) > max,
+      do: ["The #{field} must not be greater than #{max} kilobytes."],
+      else: []
+  end
+
+  defp max_rule(field, value, max) do
+    cond do
+      is_binary(value) and String.length(value) > max ->
+        ["The #{field} field must not be greater than #{max} characters."]
+
+      is_integer(value) and value > max ->
+        ["The #{field} field must not be greater than #{max}."]
+
+      numeric?(value) and to_number(value) > max ->
+        ["The #{field} field must not be greater than #{max}."]
+
+      true ->
+        []
+    end
+  end
+
+  defp mime_ext_rule(_field, nil, _), do: []
+  defp mime_ext_rule(_field, "", _), do: []
+
+  defp mime_ext_rule(field, %Laravex.Http.UploadedFile{} = file, list) do
+    allowed = list |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.map(&String.downcase/1)
+    ext = Laravex.Http.UploadedFile.extension(file)
+
+    if ext in allowed,
+      do: [],
+      else: ["The #{field} field must be a file of type: #{Enum.join(allowed, ", ")}."]
+  end
+
+  defp mime_ext_rule(field, _, _), do: ["The #{field} field must be a file."]
+
+  defp mimetype_rule(_field, nil, _), do: []
+  defp mimetype_rule(_field, "", _), do: []
+
+  defp mimetype_rule(field, %Laravex.Http.UploadedFile{} = file, list) do
+    allowed = list |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.map(&String.downcase/1)
+    type = String.downcase(to_string(file.content_type || ""))
+
+    if type in allowed or Enum.any?(allowed, &String.starts_with?(type, String.trim_trailing(&1, "/*") <> "/")),
+      do: [],
+      else: ["The #{field} field must be a file of type: #{Enum.join(allowed, ", ")}."]
+  end
+
+  defp mimetype_rule(field, _, _), do: ["The #{field} field must be a file."]
+
+  defp numeric?(value) when is_number(value), do: true
+
+  defp numeric?(value) when is_binary(value) do
+    case Float.parse(value) do
+      {_, ""} -> true
+      _ -> match?({_, ""}, Integer.parse(value))
+    end
+  end
+
+  defp numeric?(_), do: false
+
+  defp to_number(value) when is_integer(value), do: value
+  defp to_number(value) when is_float(value), do: value
+
+  defp to_number(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {i, ""} -> i
+      _ ->
+        case Float.parse(value) do
+          {f, ""} -> f
+          _ -> 0
+        end
+    end
+  end
+
+  defp valid_url?(value) when is_binary(value) do
+    uri = URI.parse(value)
+    uri.scheme in ["http", "https"] and is_binary(uri.host) and uri.host != ""
+  end
+
+  defp valid_url?(_), do: false
+
+  defp valid_uuid?(value) when is_binary(value) do
+    Regex.match?(
+      ~r/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/,
+      value
+    )
+  end
+
+  defp valid_uuid?(_), do: false
+
+  defp date_compare_rule(_field, nil, _data, _other, _op), do: []
+  defp date_compare_rule(_field, "", _data, _other, _op), do: []
+
+  defp date_compare_rule(field, value, data, other, op) do
+    left = parse_comparable_date(value)
+    right = parse_comparable_date(data_get(data, other) || other)
+
+    cond do
+      is_nil(left) or is_nil(right) ->
+        []
+
+      op == :after and Date.compare(left, right) == :gt ->
+        []
+
+      op == :before and Date.compare(left, right) == :lt ->
+        []
+
+      op == :after ->
+        ["The #{field} field must be a date after #{other}."]
+
+      op == :before ->
+        ["The #{field} field must be a date before #{other}."]
+
+      true ->
+        []
+    end
+  end
+
+  defp parse_comparable_date(%Date{} = d), do: d
+  defp parse_comparable_date(%DateTime{} = d), do: DateTime.to_date(d)
+  defp parse_comparable_date(%NaiveDateTime{} = d), do: NaiveDateTime.to_date(d)
+
+  defp parse_comparable_date(value) when is_binary(value) do
+    cond do
+      match?({:ok, _}, Date.from_iso8601(value)) ->
+        elem(Date.from_iso8601(value), 1)
+
+      match?({:ok, _, _}, DateTime.from_iso8601(value)) ->
+        {:ok, dt, _} = DateTime.from_iso8601(value)
+        DateTime.to_date(dt)
+
+      Regex.match?(~r/^\d{4}-\d{2}-\d{2}/, value) ->
+        case Date.from_iso8601(String.slice(value, 0, 10)) do
+          {:ok, d} -> d
+          _ -> nil
+        end
+
+      true ->
+        nil
+    end
+  end
+
+  defp parse_comparable_date(_), do: nil
 end
 
 defmodule Laravex.Validation.Rule do

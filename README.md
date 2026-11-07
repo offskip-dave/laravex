@@ -33,12 +33,12 @@ mix test
 | Layer | Capabilities |
 |---|---|
 | Foundation | Container, HTTP/router, global + terminable middleware, CORS, TrustHosts/Proxies, cache.headers, cookie encrypt, `/up` + `/health`, JSON 404/exceptions, logging |
-| Database | SQLite, Schema/Blueprint, migrations, query builder, **Eloquex** (fillable/guarded, touch/refresh/increment, relations, batched `with`/`with_count`, scopes, factories) |
-| Auth web loop | Session (file/database), CSRF, flash, guard, policies/gates, password broker/reset, FormRequest + Rule + conditional/date rules, Crypt, signed URLs, API tokens with abilities |
+| Database | SQLite, Schema/Blueprint, migrations, query builder, **Eloquex** (fillable/guarded, touch/refresh/increment, relations, batched `with`/`with_count`, `paginate`/`simple_paginate`, scopes, factories + Faker) |
+| Auth web loop | Session (file/database), CSRF, flash, guard, policies/gates, password broker/reset, FormRequest + Rule + file/date/conditional rules, Crypt, signed URLs, API tokens with abilities |
 | DX | `make:*`, migrate/fresh/wipe/seed, config/route/event/view cache, `optimize`, `db:show`/`model:show`, queue failed tools, schedule (`withoutOverlapping`)/event list, serve, tinker, Str/Arr, Collection, `AGENTS.md` |
-| Services | Cache, queue (sync/database/deferred, ShouldQueue, tries/backoff, failed retry), Bus chain + batch, queued listeners, mail (log/array), notifications inbox, logging, filesystem, named rate limiters |
-| HTTP | Static files, multipart uploads, JsonResource (`when_loaded`/`merge`) + paginator links, OTP `:json`, `Http.Client` (fluent + fake/stub/assert) |
-| Views | Blade `{{ }}`, `old()`, `@lang`/`__()`, `@csrf`/`@method`/`@selected`/`@checked`/`@class`/`@isset`/`@once`/`@verbatim`, `@if`/`@else`/`@unless`/`@forelse`, `@include`, `@foreach`, `@error`/`@session`, `@auth`/`@can`, `@json`, components/stacks |
+| Services | Cache, queue (sync/database/deferred, ShouldQueue, tries/backoff, failed retry), Bus chain + batch, queued listeners, mail (log/array), notifications inbox, logging, filesystem (visibility/download), named rate limiters |
+| HTTP | Static files, multipart uploads + mimes validation, downloads, JsonResource + paginator `links`, OTP `:json`, `Http.Client` (fluent + fake/stub/assert) |
+| Views | Blade `{{ }}`/`{!! !!}`, `old()`, `@lang`/`__()`, `@csrf`/`@method`/`@selected`/`@checked`/`@class`/`@isset`/`@once`/`@verbatim`/`@links`/`@pushOnce`, `@if`/`@forelse`, `@include`, `@foreach`, `@error`/`@session`, `@auth`/`@can`, `@json`, components/stacks |
 | Async | Events/listeners, notifications, schedule (cron/`hourly`/`daily`), broadcasting bus + channel auth |
 | Ecosystem | `install:api` (tokens), `install:broadcasting`, `install:starter-kit`, observability recorder |
 

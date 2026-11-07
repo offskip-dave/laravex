@@ -36,7 +36,10 @@ defmodule Laravex.View do
     |> replace_selected_checked(assigns)
     |> replace_lang()
     |> replace_push()
+    |> replace_push_once()
+    |> replace_prepend()
     |> replace_auth_directives(assigns)
+    |> replace_links(assigns)
     |> replace_forelse(assigns)
     |> replace_foreach(assigns)
     |> replace_error(assigns)
@@ -47,6 +50,7 @@ defmodule Laravex.View do
     |> replace_directives(assigns)
     |> replace_old(assigns)
     |> replace_json(assigns)
+    |> replace_raw_echoes(assigns)
     |> replace_echoes(assigns)
     |> replace_stacks()
     |> restore_verbatim(verbatim)
@@ -251,7 +255,7 @@ defmodule Laravex.View do
 
         component_assigns =
           assigns
-          |> Map.merge(parse_attrs(attrs_src))
+          |> Map.merge(parse_attrs(attrs_src, assigns))
           |> Map.put("slot", slot)
           |> Map.merge(Map.new(slots, fn {k, v} -> {k, v} end))
 
@@ -279,13 +283,46 @@ defmodule Laravex.View do
     )
   end
 
-  defp parse_attrs(nil), do: %{}
-  defp parse_attrs(""), do: %{}
+  defp parse_attrs(nil, _), do: %{}
+  defp parse_attrs("", _), do: %{}
 
-  defp parse_attrs(src) do
-    # Lightweight: ['type' => 'error', "title" => "Hi"]
-    Regex.scan(~r/['"](\w+)['"]\s*=>\s*['"]([^'"]*)['"]/, src || "")
-    |> Map.new(fn [_, k, v] -> {k, v} end)
+  defp parse_attrs(src, assigns) do
+    # Supports: 'type' => 'error', "n" => 1, 'ok' => true, 'user' => $user
+    Regex.scan(
+      ~r/['"](\w+)['"]\s*=>\s*(?:['"]([^'"]*)['"]|(\$[a-zA-Z0-9_\.]+)|(true|false|null)|(-?\d+(?:\.\d+)?))/,
+      src || ""
+    )
+    |> Map.new(fn
+      [_, k, str, "", "", ""] ->
+        {k, str}
+
+      [_, k, "", var, "", ""] ->
+        key = String.trim_leading(var, "$")
+        {k, get_in_assign(assigns, key)}
+
+      [_, k, "", "", "true", ""] ->
+        {k, true}
+
+      [_, k, "", "", "false", ""] ->
+        {k, false}
+
+      [_, k, "", "", "null", ""] ->
+        {k, nil}
+
+      [_, k, "", "", "", num] ->
+        {k,
+         case Integer.parse(num) do
+           {i, ""} -> i
+           _ ->
+             case Float.parse(num) do
+               {f, ""} -> f
+               _ -> num
+             end
+         end}
+
+      [_, k | _] ->
+        {k, ""}
+    end)
   end
 
   defp replace_vite(contents) do
@@ -382,7 +419,7 @@ defmodule Laravex.View do
 
       if path do
         File.read!(path)
-        |> render_string(Map.merge(assigns, parse_attrs(attrs_src)))
+        |> render_string(Map.merge(assigns, parse_attrs(attrs_src, assigns)))
       else
         "<!-- missing include #{name} -->"
       end
@@ -422,11 +459,44 @@ defmodule Laravex.View do
 
   defp replace_push(contents) do
     Regex.replace(~r/@push\(['"]([^'"]+)['"]\)(.*?)@endpush/s, contents, fn _, stack, body ->
-      stacks = Process.get(:laravex_stacks, %{})
-      list = Map.get(stacks, stack, []) ++ [String.trim(body)]
-      Process.put(:laravex_stacks, Map.put(stacks, stack, list))
+      push_stack(stack, String.trim(body), :append)
       ""
     end)
+  end
+
+  defp replace_push_once(contents) do
+    Regex.replace(~r/@pushOnce\(['"]([^'"]+)['"]\)(.*?)@endPushOnce/s, contents, fn _, stack, body ->
+      body = String.trim(body)
+      once_key = {:laravex_push_once, stack, :erlang.phash2(body)}
+      seen = Process.get(:laravex_push_once, MapSet.new())
+
+      unless MapSet.member?(seen, once_key) do
+        Process.put(:laravex_push_once, MapSet.put(seen, once_key))
+        push_stack(stack, body, :append)
+      end
+
+      ""
+    end)
+  end
+
+  defp replace_prepend(contents) do
+    Regex.replace(~r/@prepend\(['"]([^'"]+)['"]\)(.*?)@endprepend/s, contents, fn _, stack, body ->
+      push_stack(stack, String.trim(body), :prepend)
+      ""
+    end)
+  end
+
+  defp push_stack(stack, body, mode) do
+    stacks = Process.get(:laravex_stacks, %{})
+    list = Map.get(stacks, stack, [])
+
+    list =
+      case mode do
+        :append -> list ++ [body]
+        :prepend -> [body | list]
+      end
+
+    Process.put(:laravex_stacks, Map.put(stacks, stack, list))
   end
 
   defp replace_stacks(contents) do
@@ -434,6 +504,24 @@ defmodule Laravex.View do
 
     Regex.replace(~r/@stack\(['"]([^'"]+)['"]\)/, contents, fn _, name ->
       stacks |> Map.get(name, []) |> Enum.join("\n")
+    end)
+  end
+
+  defp replace_links(contents, assigns) do
+    Regex.replace(~r/@links\(\s*\$?([a-zA-Z0-9_\.]+)\s*\)/, contents, fn _, key ->
+      key = String.trim_leading(key, "$")
+      pager = get_in_assign(assigns, key)
+
+      cond do
+        is_map(pager) and (Map.has_key?(pager, :links) or Map.has_key?(pager, "links")) ->
+          Map.get(pager, :links) || Map.get(pager, "links") || ""
+
+        is_map(pager) ->
+          Laravex.Http.Paginator.links(pager)
+
+        true ->
+          ""
+      end
     end)
   end
 
@@ -571,6 +659,13 @@ defmodule Laravex.View do
       key = String.trim_leading(key, "$")
       value = get_in_assign(assigns, key)
       value |> Laravex.Support.JSON.encode!() |> json_for_html()
+    end)
+  end
+
+  defp replace_raw_echoes(contents, assigns) do
+    Regex.replace(~r/\{!!\s*\$?([a-zA-Z0-9_\.]+)\s*!!\}/, contents, fn _, key ->
+      key = String.trim_leading(key, "$")
+      get_in_assign(assigns, key) |> to_string()
     end)
   end
 

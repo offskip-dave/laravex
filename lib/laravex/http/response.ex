@@ -56,6 +56,29 @@ defmodule Laravex.Http.Response do
     new(status, "", [{"location", to}])
   end
 
+  @doc """
+  File download response.
+
+      Laravex.Http.Response.download(contents, "export.csv")
+      Laravex.Http.Response.download(contents, "photo.png", content_type: "image/png", inline: true)
+  """
+  def download(contents, filename, opts \\ []) when is_binary(filename) do
+    content_type = Keyword.get(opts, :content_type, "application/octet-stream")
+    disposition = if Keyword.get(opts, :inline, false), do: "inline", else: "attachment"
+    safe_name = String.replace(filename, "\"", "")
+
+    new(200, contents, [
+      {"content-type", content_type},
+      {"content-disposition", ~s(#{disposition}; filename="#{safe_name}")}
+    ])
+  end
+
+  def file(path, opts \\ []) when is_binary(path) do
+    filename = Keyword.get(opts, :as) || Path.basename(path)
+    contents = File.read!(path)
+    download(contents, filename, opts)
+  end
+
   def with_cookie(%__MODULE__{} = resp, name, value, opts \\ []) do
     max_age = Keyword.get(opts, :max_age)
     path = Keyword.get(opts, :path, Laravex.Config.Repository.get("session.path", "/"))

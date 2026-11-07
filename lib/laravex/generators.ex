@@ -155,7 +155,10 @@ defmodule Laravex.Generators do
       use Laravex.Eloquex.Factory, model: App.Models.#{model}
 
       def definition do
-        %{}
+        %{
+          "name" => Laravex.Support.Faker.name(),
+          "email" => Laravex.Support.Faker.email()
+        }
       end
     end
     """)
