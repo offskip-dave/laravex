@@ -89,6 +89,10 @@ defmodule Laravex.Http.Response do
     download(contents, filename, opts)
   end
 
+  def with_status(%__MODULE__{} = resp, status) when is_integer(status) do
+    %{resp | status: status}
+  end
+
   def with_header(%__MODULE__{} = resp, name, value) do
     key = String.downcase(to_string(name))
     headers = Enum.reject(resp.headers, fn {k, _} -> String.downcase(to_string(k)) == key end)

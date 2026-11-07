@@ -35,6 +35,29 @@ defmodule Laravex.Support.Str do
     end
   end
 
+  @doc "Take the first `n` characters (negative = from end). Laravel `Str::take`."
+  def take(s, n) when is_integer(n) do
+    s = to_string(s)
+
+    cond do
+      n == 0 -> ""
+      n > 0 -> String.slice(s, 0, n)
+      true -> String.slice(s, n, abs(n))
+    end
+  end
+
+  @doc "Substring from `start` for `len` characters (Laravel `Str::substr`)."
+  def substr(s, start, len \\ nil) when is_integer(start) do
+    s = to_string(s)
+
+    cond do
+      is_nil(len) and start >= 0 -> String.slice(s, start..-1//1)
+      is_nil(len) -> String.slice(s, start..-1//1)
+      len >= 0 -> String.slice(s, start, len)
+      true -> ""
+    end
+  end
+
   def slug(s, sep \\ "-") do
     s
     |> to_string()

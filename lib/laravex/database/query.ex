@@ -198,11 +198,29 @@ defmodule Laravex.Database.Query do
     %{q | wheres: q.wheres ++ [{"strftime('%d', #{column}) = ?", d}], bindings: q.bindings ++ [d]}
   end
 
+  @doc "Compare the time portion of a column (SQLite `time()`)."
+  def where_time(%__MODULE__{} = q, column, value) do
+    time = normalize_sql_time(value)
+    %{q | wheres: q.wheres ++ [{"time(#{column}) = ?", time}], bindings: q.bindings ++ [time]}
+  end
+
   defp normalize_sql_date(%Date{} = d), do: Date.to_iso8601(d)
   defp normalize_sql_date(%DateTime{} = dt), do: DateTime.to_date(dt) |> Date.to_iso8601()
   defp normalize_sql_date(%NaiveDateTime{} = ndt), do: NaiveDateTime.to_date(ndt) |> Date.to_iso8601()
   defp normalize_sql_date(v) when is_binary(v), do: String.slice(v, 0, 10)
   defp normalize_sql_date(v), do: to_string(v)
+
+  defp normalize_sql_time(%Time{} = t), do: Time.to_iso8601(t) |> String.slice(0, 8)
+  defp normalize_sql_time(%DateTime{} = dt), do: DateTime.to_time(dt) |> normalize_sql_time()
+  defp normalize_sql_time(%NaiveDateTime{} = ndt), do: NaiveDateTime.to_time(ndt) |> normalize_sql_time()
+  defp normalize_sql_time(v) when is_binary(v) do
+    cond do
+      String.contains?(v, "T") -> v |> String.split("T") |> List.last() |> String.slice(0, 8)
+      String.contains?(v, " ") -> v |> String.split(" ") |> List.last() |> String.slice(0, 8)
+      true -> String.slice(v, 0, 8)
+    end
+  end
+  defp normalize_sql_time(v), do: to_string(v)
 
   def where_column(%__MODULE__{} = q, first, second), do: where_column(q, first, "=", second)
 

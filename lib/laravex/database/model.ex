@@ -341,6 +341,14 @@ defmodule Laravex.Database.Model do
         Laravex.Database.Model.refresh(model)
       end
 
+      def fresh(%__MODULE__{id: id} = model, relations \\ []) when not is_nil(id) do
+        Laravex.Database.Model.fresh(model, relations)
+      end
+
+      def replicate(%__MODULE__{} = model, except \\ []) do
+        Laravex.Database.Model.replicate(model, except)
+      end
+
       def increment(%__MODULE__{} = model, column, amount \\ 1) do
         Laravex.Database.Model.increment(model, column, amount)
       end
@@ -877,6 +885,53 @@ defmodule Laravex.Database.Model do
   end
 
   def refresh(model), do: model
+
+  @doc "Re-fetch a new instance from the DB (Laravel `fresh`). Returns nil if missing."
+  def fresh(model, relations \\ [])
+
+  def fresh(%{__struct__: mod, id: id} = _model, relations) when not is_nil(id) do
+    opts =
+      if function_exported?(mod, :soft_deletes?, 0) and mod.soft_deletes?(),
+        do: [with_trashed: true],
+        else: []
+
+    case mod.find(id, opts) do
+      nil ->
+        nil
+
+      found ->
+        relations = List.wrap(relations)
+
+        if relations == [] do
+          found
+        else
+          [loaded] = with_relations([found], mod, relations)
+          loaded
+        end
+    end
+  end
+
+  def fresh(model, _relations), do: model
+
+  @doc "Clone the model without persisting; drops id/timestamps by default (Laravel `replicate`)."
+  def replicate(model, except \\ [])
+
+  def replicate(%{__struct__: mod} = model, except) do
+    except =
+      (["id", "created_at", "updated_at", "deleted_at"] ++ List.wrap(except))
+      |> Enum.map(&to_string/1)
+      |> MapSet.new()
+
+    attrs =
+      model
+      |> Map.from_struct()
+      |> Enum.reject(fn {k, _} ->
+        k in [:__struct__, :__relations__] or MapSet.member?(except, to_string(k))
+      end)
+      |> Map.new(fn {k, v} -> {to_string(k), v} end)
+
+    mod.new(attrs)
+  end
 
   def increment(%{__struct__: mod, id: id} = model, column, amount \\ 1)
       when not is_nil(id) and is_integer(amount) do

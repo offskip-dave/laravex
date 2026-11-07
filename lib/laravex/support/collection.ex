@@ -347,6 +347,14 @@ defmodule Laravex.Support.Collection do
     if truthy?(condition), do: c, else: fun.(c)
   end
 
+  def when_empty(%__MODULE__{} = c, fun) when is_function(fun, 1) do
+    if is_empty?(c), do: fun.(c), else: c
+  end
+
+  def when_not_empty(%__MODULE__{} = c, fun) when is_function(fun, 1) do
+    if is_not_empty?(c), do: fun.(c), else: c
+  end
+
   def avg(%__MODULE__{items: []}), do: nil
 
   def avg(%__MODULE__{items: items}) do
