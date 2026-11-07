@@ -7,7 +7,7 @@ defmodule Laravex.Generators do
     stub("Models", name, """
     defmodule App.Models.#{name} do
       defstruct [:id, :created_at, :updated_at]
-      use Laravex.Database.Model, table: "#{table}"
+      use Laravex.Eloquex.Model, table: "#{table}"
       def fillable, do: []
       def casts, do: %{}
     end
@@ -77,11 +77,15 @@ defmodule Laravex.Generators do
       ])
 
     File.mkdir_p!(Path.dirname(path))
+    model = String.replace_suffix(name, "Factory", "")
 
     File.write!(path, """
     defmodule Database.Factories.#{name} do
-      def definition, do: %{}
-      def make(attrs \\\\ %{}), do: Map.merge(definition(), attrs)
+      use Laravex.Eloquex.Factory, model: App.Models.#{model}
+
+      def definition do
+        %{}
+      end
     end
     """)
 

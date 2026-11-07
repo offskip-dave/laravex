@@ -1,7 +1,8 @@
 defmodule Laravex.Database.Model do
   @moduledoc """
-  Eloquent-shaped ActiveRecord base with relations, pagination, soft deletes,
-  scopes, accessors/mutators, and dirty tracking.
+  Compatibility ActiveRecord base (prefer `Laravex.Eloquex.Model` — Eloquex).
+
+  Soft deletes, relations, pagination, scopes, accessors/mutators, dirty tracking.
   Use with `use Laravex.Database.Model, table: "users"` or `soft_deletes: true`.
   """
 
@@ -22,21 +23,12 @@ defmodule Laravex.Database.Model do
       end
 
       def query(opts \\ []) do
-        q = Laravex.Database.Query.table(table_name())
+        q = Laravex.Database.Model.__query_base__(__MODULE__, unquote(soft_deletes), opts)
 
-        if unquote(soft_deletes) do
-          cond do
-            Keyword.get(opts, :with_trashed, false) ->
-              q
-
-            Keyword.get(opts, :only_trashed, false) ->
-              Laravex.Database.Query.where_not_null(q, "deleted_at")
-
-            true ->
-              Laravex.Database.Query.where_null(q, "deleted_at")
-          end
-        else
+        if Keyword.get(opts, :without_global_scopes, false) do
           q
+        else
+          Laravex.Database.Model.apply_global_scopes(__MODULE__, q)
         end
       end
 
@@ -193,6 +185,37 @@ defmodule Laravex.Database.Model do
       end
 
       defoverridable new: 0, new: 1, find_by_email: 1
+    end
+  end
+
+  def __query_base__(mod, soft_deletes, opts \\ []) do
+    q = Laravex.Database.Query.table(mod.table_name())
+
+    if soft_deletes do
+      cond do
+        Keyword.get(opts, :with_trashed, false) ->
+          q
+
+        Keyword.get(opts, :only_trashed, false) ->
+          Laravex.Database.Query.where_not_null(q, "deleted_at")
+
+        true ->
+          Laravex.Database.Query.where_null(q, "deleted_at")
+      end
+    else
+      q
+    end
+  end
+
+  def apply_global_scopes(mod, q) do
+    if function_exported?(mod, :__global_scopes__, 0) do
+      Enum.reduce(mod.__global_scopes__() || [], q, fn
+        {_name, fun}, acc when is_function(fun, 1) -> fun.(acc)
+        fun, acc when is_function(fun, 1) -> fun.(acc)
+        _, acc -> acc
+      end)
+    else
+      q
     end
   end
 

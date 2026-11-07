@@ -87,13 +87,20 @@ defmodule Laravex.Http.Middleware.Authorize do
 end
 
 defmodule Laravex.Http.Middleware.ThrottleRequests do
-  @moduledoc "Simple cache-backed rate limiter (`throttle:60,1` → 60/min)."
+  @moduledoc "Cache-backed rate limiter (`throttle:60,1` or named `throttle:api`)."
 
   def handle(request, opts) do
+    opts =
+      case Keyword.get(opts, :limiter) do
+        nil -> opts
+        name -> Keyword.merge(Laravex.Http.RateLimiter.resolve(name, request), opts)
+      end
+
     max = Keyword.get(opts, :max, 60)
     decay = Keyword.get(opts, :decay, 1)
     ip = Laravex.Http.Request.header(request, "x-forwarded-for") || "127.0.0.1"
-    key = "throttle:#{ip}:#{request.method}:#{request.path}"
+    limiter = Keyword.get(opts, :limiter, "default")
+    key = "throttle:#{limiter}:#{ip}:#{request.method}:#{request.path}"
 
     count = (Laravex.Cache.Manager.get(key) || 0) + 1
     Laravex.Cache.Manager.put(key, count, decay * 60)

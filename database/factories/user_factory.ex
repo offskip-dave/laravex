@@ -1,5 +1,7 @@
 defmodule Database.Factories.UserFactory do
-  @moduledoc "Port of database/factories/UserFactory.php"
+  @moduledoc "Port of database/factories/UserFactory.php (Eloquex factory)."
+
+  use Laravex.Eloquex.Factory, model: App.Models.User
 
   def definition do
     %{
@@ -11,21 +13,13 @@ defmodule Database.Factories.UserFactory do
     }
   end
 
-  def make(attrs \\ %{}) do
-    definition()
-    |> Map.merge(stringify_keys(attrs))
-    |> then(&App.Models.User.new/1)
+  def states do
+    [
+      unverified: fn -> %{"email_verified_at" => nil} end
+    ]
   end
 
-  def create(attrs \\ %{}) do
-    definition()
-    |> Map.merge(stringify_keys(attrs))
-    |> then(&App.Models.User.create/1)
-  end
-
-  def unverified(attrs \\ %{}) do
-    make(Map.put(stringify_keys(attrs), "email_verified_at", nil))
-  end
+  def unverified(attrs \\ %{}), do: make_state(:unverified, attrs)
 
   defp fake_name do
     Enum.random(["Ada Lovelace", "Grace Hopper", "Alan Turing", "Katherine Johnson"])
@@ -34,6 +28,4 @@ defmodule Database.Factories.UserFactory do
   defp fake_email do
     "user#{System.unique_integer([:positive])}@example.com"
   end
-
-  defp stringify_keys(map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
 end

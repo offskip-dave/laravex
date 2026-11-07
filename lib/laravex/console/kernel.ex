@@ -14,7 +14,9 @@ defmodule Laravex.Console.Kernel do
     "db:wipe" => {&__MODULE__.cmd_wipe/1, "Drop all tables"},
     "route:list" => {&__MODULE__.cmd_routes/1, "List routes"},
     "config:cache" => {&__MODULE__.cmd_config_cache/1, "Cache configuration"},
+    "config:clear" => {&__MODULE__.cmd_config_clear/1, "Clear configuration cache"},
     "view:cache" => {&__MODULE__.cmd_view_cache/1, "Cache views"},
+    "view:clear" => {&__MODULE__.cmd_view_clear/1, "Clear compiled views"},
     "queue:work" => {&__MODULE__.cmd_queue_work/1, "Process queue jobs"},
     "schedule:run" => {&__MODULE__.cmd_schedule/1, "Run due scheduled tasks"},
     "tinker" => {&__MODULE__.cmd_tinker/1, "Interact with the application"},
@@ -117,16 +119,23 @@ defmodule Laravex.Console.Kernel do
   end
 
   def cmd_config_cache(_) do
-    path = Path.join(Laravex.Foundation.Application.base_path(), "bootstrap/cache/config.term")
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, :erlang.term_to_binary(Laravex.Config.Repository.all()))
-    IO.puts("Configuration cached.")
+    Laravex.Config.Repository.cache!()
+    IO.puts("Configuration cached successfully.")
+  end
+
+  def cmd_config_clear(_) do
+    Laravex.Config.Repository.clear_cache!()
+    IO.puts("Configuration cache cleared.")
   end
 
   def cmd_view_cache(_) do
-    dir = Path.join(Laravex.Foundation.Application.base_path(), "storage/framework/views")
-    File.mkdir_p!(dir)
-    IO.puts("Views cached.")
+    n = Laravex.View.Cache.warm()
+    IO.puts("Blade templates cached (#{n} views).")
+  end
+
+  def cmd_view_clear(_) do
+    Laravex.View.Cache.clear()
+    IO.puts("Compiled views cleared.")
   end
 
   def cmd_queue_work(args) do

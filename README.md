@@ -33,10 +33,10 @@ mix test
 | Layer | Capabilities |
 |---|---|
 | Foundation | Container, HTTP/router (params, groups, resources/apiResource), middleware (session/CSRF/bindings/auth/guest/can/throttle/signed), exceptions, logging |
-| Database | SQLite via `sqlite3` CLI, Schema/Blueprint, dynamic migrations, query builder, Eloquent (relations, pagination, soft deletes, scopes, dirty tracking) |
+| Database | SQLite via `sqlite3` CLI, Schema/Blueprint, dynamic migrations, query builder, **Eloquex** ORM (relations, pagination, soft deletes, scopes, factories) |
 | Auth web loop | Session, CSRF, flash, guard, policies/gates, password broker/reset, validation depth, Crypt, signed URLs, DB API tokens |
-| DX | `make:*`, migrate/fresh/wipe/seed, route:list, serve, tinker, EventServiceProvider, Collection helpers, `AGENTS.md` |
-| Services | Cache, queue, mail (views/from/fake), notifications (Notifiable), logging (levels/daily/placeholders), filesystem |
+| DX | `make:*`, migrate/fresh/wipe/seed, config/view cache+clear, route:list, serve, tinker, Str/Arr, Collection, `AGENTS.md` |
+| Services | Cache, queue (sync/database/deferred, ShouldQueue), mail, notifications, logging, filesystem, named rate limiters |
 | HTTP | Static files, multipart uploads, JsonResource + paginator links, OTP `:json` |
 | Views | Blade `{{ }}`, `old()`, `@csrf`/`@method`, `@if`/`@else`/`@unless`/`@forelse`, `@include`, `@foreach`, `@error`/`@session`, `@auth`/`@can`, components/stacks |
 | Async | Events/listeners, notifications, schedule (cron/`hourly`/`daily`), broadcasting bus |

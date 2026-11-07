@@ -1,5 +1,5 @@
 defmodule App.Models.User do
-  @moduledoc "Port of app/Models/User.php with Eloquent-shaped persistence."
+  @moduledoc "Port of app/Models/User.php with Eloquex persistence."
 
   defstruct [
     :id,
@@ -12,7 +12,7 @@ defmodule App.Models.User do
     :updated_at
   ]
 
-  use Laravex.Database.Model, table: "users"
+  use Laravex.Eloquex.Model, table: "users"
   use Laravex.Notifications.Notifiable
 
   def fillable, do: ["name", "email", "password"]

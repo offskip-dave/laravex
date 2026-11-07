@@ -10,7 +10,12 @@ defmodule Laravex.View do
     path = find_view(base, name)
     unless path, do: raise("View [#{name}] not found.")
 
-    contents = File.read!(path)
+    contents =
+      case Laravex.View.Cache.read(path) do
+        {:ok, c} -> c
+        :error -> File.read!(path)
+      end
+
     rendered = render_string(contents, merge_shared(assigns))
     Laravex.Http.Response.html(rendered)
   end

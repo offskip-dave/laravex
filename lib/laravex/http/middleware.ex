@@ -71,13 +71,28 @@ defmodule Laravex.Http.Middleware do
         {Laravex.Http.Middleware.Authorize, ability: ability, resource: resource}
 
       "throttle" ->
-        {max, decay} =
-          case String.split(arg || "60,1", ",", parts: 2) do
-            [m, d] -> {String.to_integer(String.trim(m)), String.to_integer(String.trim(d))}
-            [m] -> {String.to_integer(String.trim(m)), 1}
+        opts =
+          cond do
+            is_nil(arg) or arg == "" ->
+              [max: 60, decay: 1]
+
+            String.contains?(arg, ",") ->
+              case String.split(arg, ",", parts: 2) do
+                [m, d] ->
+                  [max: String.to_integer(String.trim(m)), decay: String.to_integer(String.trim(d))]
+
+                [m] ->
+                  [max: String.to_integer(String.trim(m)), decay: 1]
+              end
+
+            Regex.match?(~r/^\d+$/, arg) ->
+              [max: String.to_integer(arg), decay: 1]
+
+            true ->
+              [limiter: arg]
           end
 
-        {Laravex.Http.Middleware.ThrottleRequests, max: max, decay: decay}
+        {Laravex.Http.Middleware.ThrottleRequests, opts}
 
       other ->
         {Module.concat([other]), []}

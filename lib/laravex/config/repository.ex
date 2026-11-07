@@ -11,6 +11,38 @@ defmodule Laravex.Config.Repository do
   )
 
   def load!(base_path) do
+    cache_path = Path.join(base_path, "bootstrap/cache/config.term")
+
+    configs =
+      if File.exists?(cache_path) do
+        :erlang.binary_to_term(File.read!(cache_path))
+      else
+        load_from_files(base_path)
+      end
+
+    Application.put_env(:laravex, :config, configs)
+    configs
+  end
+
+  def cache!(base_path \\ nil) do
+    base_path = base_path || Laravex.Foundation.Application.base_path()
+    configs = load_from_files(base_path)
+    path = Path.join(base_path, "bootstrap/cache/config.term")
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, :erlang.term_to_binary(configs))
+    Application.put_env(:laravex, :config, configs)
+    :ok
+  end
+
+  def clear_cache!(base_path \\ nil) do
+    base_path = base_path || Laravex.Foundation.Application.base_path()
+    path = Path.join(base_path, "bootstrap/cache/config.term")
+    if File.exists?(path), do: File.rm!(path)
+    load!(base_path)
+    :ok
+  end
+
+  defp load_from_files(base_path) do
     config_dir = Path.join(base_path, "config")
 
     files =
@@ -24,28 +56,23 @@ defmodule Laravex.Config.Repository do
         []
       end
 
-    # Ensure defaults are attempted even if directory listing misses them
     files =
       (@default_configs
        |> Enum.map(&"#{&1}.exs")
        |> Kernel.++(files))
       |> Enum.uniq()
 
-    configs =
-      Enum.reduce(files, %{}, fn file, acc ->
-        path = Path.join(config_dir, file)
-        name = Path.rootname(file)
+    Enum.reduce(files, %{}, fn file, acc ->
+      path = Path.join(config_dir, file)
+      name = Path.rootname(file)
 
-        if File.exists?(path) do
-          {value, _} = Code.eval_file(path)
-          Map.put(acc, name, value)
-        else
-          acc
-        end
-      end)
-
-    Application.put_env(:laravex, :config, configs)
-    configs
+      if File.exists?(path) do
+        {value, _} = Code.eval_file(path)
+        Map.put(acc, name, value)
+      else
+        acc
+      end
+    end)
   end
 
   def get(key, default \\ nil) when is_binary(key) do

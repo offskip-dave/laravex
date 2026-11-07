@@ -49,8 +49,8 @@ Password resets use `Laravex.Auth.Password` + `password_reset_tokens` (wired by 
 - Bootstrap via `Bootstrap.App.build() |> Laravex.Foundation.Application.create/1`.
 - Routes register in `Routes.Web` / `Routes.Console`; optional `Routes.Api` / `Routes.Auth` after install.
 - Config: `Laravex.Config.Repository.get("app.name")` — files under `config/*.exs` except Mix’s `config.exs` / `dev.exs` / `test.exs` / `prod.exs` / `runtime.exs`.
-- Models: `use Laravex.Database.Model, table: "…"`.
-- Middleware groups: `web` (session/CSRF) vs `api` (no CSRF). Aliases: `auth`, `guest`, `can:ability[,param]`, `throttle:max,decay`, `signed`.
+- Models (Eloquex): prefer `use Laravex.Eloquex.Model, table: "…"`. `Laravex.Database.Model` is a compatibility alias.
+- Middleware groups: `web` (session/CSRF) vs `api` (no CSRF). Aliases: `auth`, `guest`, `can:ability[,param]`, `throttle:60,1` or `throttle:api`, `signed`.
 - Policies live in `app/Policies/*Policy.ex` and resolve via `Laravex.Auth.Gate`.
 - Prefer extending `lib/laravex/*` for framework behavior; keep `app/` for application code.
 
