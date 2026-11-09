@@ -1,6 +1,8 @@
 defmodule Laravex.Generators do
   @moduledoc "Artisan make:* stub generators."
 
+  alias Laravex.Console.Output
+
   def make_model(name, flags) do
     table = Macro.underscore(name) <> "s"
 
@@ -68,7 +70,7 @@ defmodule Laravex.Generators do
     end
     """)
 
-    IO.puts("Migration created: database/migrations/#{file}")
+    Output.info("Migration [database/migrations/#{file}] created successfully.")
   end
 
   def make_event(name) do
@@ -118,7 +120,7 @@ defmodule Laravex.Generators do
           )
 
         File.write!(path, updated)
-        IO.puts("Registered #{listener_mod} for #{event_mod} in EventServiceProvider.")
+        Output.info("Registered #{listener_mod} for #{event_mod} in EventServiceProvider.")
 
       String.contains?(contents, "def listen do\n    %{}") ->
         updated =
@@ -130,10 +132,10 @@ defmodule Laravex.Generators do
           )
 
         File.write!(path, updated)
-        IO.puts("Registered #{listener_mod} for #{event_mod} in EventServiceProvider.")
+        Output.info("Registered #{listener_mod} for #{event_mod} in EventServiceProvider.")
 
       true ->
-        IO.puts(:stderr, "Could not auto-wire EventServiceProvider; add mapping manually.")
+        Output.warn("Could not auto-wire EventServiceProvider; add mapping manually.")
     end
 
     :ok
@@ -163,7 +165,7 @@ defmodule Laravex.Generators do
     end
     """)
 
-    IO.puts("Factory created: #{path}")
+    Output.info("Factory [#{path}] created successfully.")
   end
 
   def make_seeder(name) do
@@ -180,7 +182,7 @@ defmodule Laravex.Generators do
     end
     """)
 
-    IO.puts("Seeder created: #{path}")
+    Output.info("Seeder [#{path}] created successfully.")
   end
 
   def make_policy(name) do
@@ -275,7 +277,7 @@ defmodule Laravex.Generators do
       File.write!(console, updated)
     end
 
-    IO.puts("Command created: app/Console/#{cmd}.ex (registered in routes/console.ex)")
+    Output.info("Command [app/Console/#{cmd}.ex] created successfully.")
     :ok
   end
 
@@ -376,9 +378,9 @@ defmodule Laravex.Generators do
 
     unless File.exists?(path) do
       File.write!(path, default_view_contents(name))
-      IO.puts("View created: #{path}")
+      Output.info("View [#{path}] created successfully.")
     else
-      IO.puts(:stderr, "View already exists: #{path}")
+      Output.warn("View [#{path}] already exists.")
     end
 
     :ok
@@ -409,7 +411,7 @@ defmodule Laravex.Generators do
     end
     """)
 
-    IO.puts("Test created: #{path}")
+    Output.info("Test [#{path}] created successfully.")
     :ok
   end
 
@@ -531,7 +533,7 @@ defmodule Laravex.Generators do
 
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, contents)
-    IO.puts("Created: #{path}")
+    Output.info("Created [#{path}] successfully.")
     :ok
   end
 
@@ -556,7 +558,7 @@ defmodule Laravex.Generators do
             )
 
           File.write!(path, updated)
-          IO.puts("Noted #{entry} in bootstrap/providers.ex (add to list when ready).")
+          Output.comment("Noted #{entry} in bootstrap/providers.ex (add to list when ready).")
 
         true ->
           :ok

@@ -1,6 +1,8 @@
 defmodule Laravex.Console.Kernel do
   @moduledoc "Artisan command dispatcher."
 
+  alias Laravex.Console.Output
+
   @commands %{
     "inspire" => {&__MODULE__.cmd_inspire/1, "Display an inspiring quote"},
     "list" => {&__MODULE__.cmd_list/1, "List commands"},
@@ -102,7 +104,7 @@ defmodule Laravex.Console.Kernel do
             case Laravex.Console.Router.dispatch(command, args) do
               :ok -> :ok
               :not_found ->
-                IO.puts(:stderr, "Command not found: #{command}")
+                Output.error("Command \"#{command}\" is not defined.")
                 System.halt(1)
             end
         end
@@ -111,15 +113,42 @@ defmodule Laravex.Console.Kernel do
 
   def commands, do: @commands
 
-  def cmd_inspire(_), do: IO.puts(Laravex.Support.Inspiring.quote_text())
+  def cmd_inspire(_), do: Output.line(Laravex.Support.Inspiring.quote_text())
 
   def cmd_list(_) do
-    IO.puts("Laravex Artisan\n")
+    version = Application.spec(:laravex, :vsn) |> to_string()
+    Output.line("<options=bold>Laravex</> <fg=green;options=bold>Framework</> <fg=yellow>#{version}</>")
+    Output.writeln()
+    Output.line("<comment>Usage:</comment>")
+    Output.line("  command [options] [arguments]")
+    Output.writeln()
+    Output.line("<comment>Available commands:</comment>")
 
     @commands
     |> Enum.sort_by(fn {name, _} -> name end)
-    |> Enum.each(fn {name, {_, desc}} ->
-      IO.puts("  #{String.pad_trailing(name, 24)} #{desc}")
+    |> Enum.group_by(fn {name, _} ->
+      case String.split(name, ":", parts: 2) do
+        [ns, _] -> ns
+        _ -> ""
+      end
+    end)
+    |> Enum.sort_by(fn {ns, _} -> ns end)
+    |> Enum.each(fn {ns, cmds} ->
+      if ns != "" do
+        Output.line(" <comment>#{ns}</comment>")
+      end
+
+      width =
+        cmds
+        |> Enum.map(fn {name, _} -> String.length(name) end)
+        |> Enum.max(fn -> 0 end)
+        |> max(18)
+
+      Enum.sort_by(cmds, fn {name, _} -> name end)
+      |> Enum.each(fn {name, {_, desc}} ->
+        padded = String.pad_trailing(name, width + 2)
+        Output.line("  <info>#{padded}</info>#{desc}")
+      end)
     end)
   end
 
@@ -132,42 +161,78 @@ defmodule Laravex.Console.Kernel do
       end
 
     {:ok, _pid, actual} = Laravex.Http.Server.start_link(port: port)
-    IO.puts("Laravex development server started: http://127.0.0.1:#{actual}")
+    Output.info("Server running on <fg=cyan>http://127.0.0.1:#{actual}</>.")
     Process.sleep(:infinity)
   end
 
   def cmd_migrate(_), do: (Laravex.Database.Migrator.migrate(); :ok)
   def cmd_rollback(_), do: (Laravex.Database.Migrator.rollback(); :ok)
   def cmd_refresh(_), do: (Laravex.Database.Migrator.refresh(); :ok)
-  def cmd_fresh(_), do: (Laravex.Database.Migrator.fresh(); IO.puts("Dropped all tables and re-ran migrations."); :ok)
-  def cmd_wipe(_), do: (Laravex.Database.Migrator.wipe(); IO.puts("Dropped all tables."); :ok)
+
+  def cmd_fresh(_) do
+    Laravex.Database.Migrator.fresh()
+    Output.info("Dropped all tables and re-ran all migrations.")
+    :ok
+  end
+
+  def cmd_wipe(_) do
+    Laravex.Database.Migrator.wipe()
+    Output.info("Dropped all tables successfully.")
+    :ok
+  end
 
   def cmd_status(_) do
     Laravex.Database.Migrator.status()
-    |> Enum.each(fn %{migration: m, status: s} -> IO.puts("#{String.pad_trailing(s, 10)} #{m}") end)
+    |> Enum.each(fn %{migration: m, status: s} ->
+      label = String.pad_trailing(to_string(s), 10)
+
+      painted =
+        case String.downcase(to_string(s)) do
+          "ran" -> "<fg=green;options=bold>#{label}</>"
+          "pending" -> "<fg=yellow;options=bold>#{label}</>"
+          _ -> "<comment>#{label}</comment>"
+        end
+
+      Output.line("  #{painted}#{m}")
+    end)
   end
 
   def cmd_seed(_) do
     _ = Database.Seeders.DatabaseSeeder.run()
-    IO.puts("Database seeded.")
+    Output.info("Database seeding completed successfully.")
     :ok
   end
 
   def cmd_routes(_) do
-    Laravex.Routing.Router.routes()
-    |> Enum.each(fn r ->
-      IO.puts("#{String.pad_trailing(r.method, 7)} #{String.pad_trailing(r.uri, 40)} #{r.name}")
-    end)
+    routes = Laravex.Routing.Router.routes()
+
+    if routes == [] do
+      Output.comment("  No routes defined.")
+    else
+      Output.line(
+        "  <fg=gray>" <>
+          String.pad_trailing("Method", 8) <>
+          String.pad_trailing("URI", 40) <>
+          "Name</>"
+      )
+
+      Enum.each(routes, fn r ->
+        method = String.pad_trailing(to_string(r.method), 8)
+        uri = String.pad_trailing(to_string(r.uri), 40)
+        name = to_string(r.name || "")
+        Output.line("  <info>#{method}</info>#{uri}<fg=yellow>#{name}</>")
+      end)
+    end
   end
 
   def cmd_config_cache(_) do
     Laravex.Config.Repository.cache!()
-    IO.puts("Configuration cached successfully.")
+    Output.info("Configuration cached successfully.")
   end
 
   def cmd_config_clear(_) do
     Laravex.Config.Repository.clear_cache!()
-    IO.puts("Configuration cache cleared.")
+    Output.info("Configuration cache cleared successfully.")
   end
 
   def cmd_route_cache(_) do
@@ -190,12 +255,12 @@ defmodule Laravex.Console.Kernel do
       end
 
     Laravex.Routing.RouteCache.cache!()
-    IO.puts("Routes cached successfully.")
+    Output.info("Routes cached successfully.")
   end
 
   def cmd_route_clear(_) do
     Laravex.Routing.RouteCache.clear!()
-    IO.puts("Route cache cleared.")
+    Output.info("Route cache cleared successfully.")
   end
 
   def cmd_route_match([method, uri | _]) do
@@ -203,14 +268,17 @@ defmodule Laravex.Console.Kernel do
 
     case Laravex.Routing.Router.match(request) do
       :error ->
-        IO.puts("No matching route for #{String.upcase(method)} #{uri}")
+        Output.warn("No matching route for #{String.upcase(method)} #{uri}.")
 
       {:ok, req, handler, opts} ->
         name = Keyword.get(opts, :name, "—")
-        IO.puts("MATCH  #{String.upcase(method)} #{uri}")
-        IO.puts("  name:   #{name}")
-        IO.puts("  params: #{inspect(req.route_params)}")
-        IO.puts("  action: #{inspect(handler)}")
+        Output.section("Match")
+        Output.two_column_detail("Method", String.upcase(method))
+        Output.two_column_detail("URI", uri)
+        Output.two_column_detail("Name", name)
+        Output.two_column_detail("Params", inspect(req.route_params))
+        Output.two_column_detail("Action", inspect(handler))
+        Output.writeln()
     end
 
     :ok
@@ -220,13 +288,13 @@ defmodule Laravex.Console.Kernel do
 
   def cmd_cache_clear(_) do
     Laravex.Cache.Manager.flush()
-    IO.puts("Application cache cleared.")
+    Output.info("Application cache cleared successfully.")
     :ok
   end
 
   def cmd_cache_forget([key | _]) do
     Laravex.Cache.Manager.forget(key)
-    IO.puts("Removed cache key #{key}")
+    Output.info("Forgot key [#{key}].")
     :ok
   end
 
@@ -234,12 +302,12 @@ defmodule Laravex.Console.Kernel do
 
   def cmd_view_cache(_) do
     n = Laravex.View.Cache.warm()
-    IO.puts("Blade templates cached (#{n} views).")
+    Output.info("Blade templates cached successfully (#{n} views).")
   end
 
   def cmd_view_clear(_) do
     Laravex.View.Cache.clear()
-    IO.puts("Compiled views cleared.")
+    Output.info("Compiled views cleared successfully.")
   end
 
   def cmd_optimize(_) do
@@ -247,7 +315,7 @@ defmodule Laravex.Console.Kernel do
     cmd_route_cache([])
     cmd_event_cache([])
     cmd_view_cache([])
-    IO.puts("Files cached successfully.")
+    Output.info("Files cached successfully.")
   end
 
   def cmd_optimize_clear(_) do
@@ -255,7 +323,7 @@ defmodule Laravex.Console.Kernel do
     cmd_route_clear([])
     cmd_event_clear([])
     cmd_view_clear([])
-    IO.puts("Cached bootstrap files cleared successfully.")
+    Output.info("Cached bootstrap files cleared successfully.")
   end
 
   def cmd_queue_work(args) do
@@ -273,7 +341,7 @@ defmodule Laravex.Console.Kernel do
         n -> n
       end
 
-    IO.puts("Listening for queue jobs…")
+    Output.info("Listening for queue jobs…")
 
     Stream.repeatedly(fn ->
       Laravex.Queue.Worker.work(once: true)
@@ -287,17 +355,20 @@ defmodule Laravex.Console.Kernel do
     jobs = Laravex.Queue.Worker.failed_jobs()
 
     if jobs == [] do
-      IO.puts("No failed jobs!")
+      Output.info("No failed jobs!")
     else
-      IO.puts(
-        String.pad_trailing("ID", 6) <>
+      Output.line(
+        "  <fg=gray>" <>
+          String.pad_trailing("ID", 6) <>
           String.pad_trailing("UUID", 20) <>
-          String.pad_trailing("Queue", 12) <> "Failed At"
+          String.pad_trailing("Queue", 12) <>
+          "Failed At</>"
       )
 
       Enum.each(jobs, fn job ->
-        IO.puts(
-          String.pad_trailing(to_string(job["id"]), 6) <>
+        Output.line(
+          "  " <>
+            String.pad_trailing(to_string(job["id"]), 6) <>
             String.pad_trailing(to_string(job["uuid"]), 20) <>
             String.pad_trailing(to_string(job["queue"]), 12) <>
             to_string(job["failed_at"])
@@ -308,45 +379,48 @@ defmodule Laravex.Console.Kernel do
 
   def cmd_queue_retry([id | _]) do
     case Laravex.Queue.Worker.retry_failed(id) do
-      {:ok, _} -> IO.puts("The failed job [#{id}] has been pushed back onto the queue.")
-      {:error, :not_found} -> IO.puts(:stderr, "No failed job matches [#{id}].")
-      {:error, :bad_payload} -> IO.puts(:stderr, "Unable to decode failed job payload.")
+      {:ok, _} -> Output.info("The failed job [#{id}] has been pushed back onto the queue!")
+      {:error, :not_found} -> Output.error("No failed job matches the given ID [#{id}].")
+      {:error, :bad_payload} -> Output.error("Unable to decode failed job payload.")
     end
   end
 
-  def cmd_queue_retry(_), do: IO.puts("Usage: artisan queue:retry {id|uuid}")
+  def cmd_queue_retry(_), do: usage("queue:retry", "{id|uuid}")
 
   def cmd_queue_forget([id | _]) do
     case Laravex.Queue.Worker.forget_failed(id) do
-      :ok -> IO.puts("Failed job deleted successfully.")
-      _ -> IO.puts(:stderr, "No failed job matches [#{id}].")
+      :ok -> Output.info("Failed job deleted successfully!")
+      _ -> Output.error("No failed job matches the given ID [#{id}].")
     end
   end
 
-  def cmd_queue_forget(_), do: IO.puts("Usage: artisan queue:forget {id|uuid}")
+  def cmd_queue_forget(_), do: usage("queue:forget", "{id|uuid}")
 
   def cmd_queue_flush(_) do
     Laravex.Queue.Worker.flush_failed()
-    IO.puts("All failed jobs deleted successfully.")
+    Output.info("All failed jobs deleted successfully!")
   end
 
   def cmd_queue_batches(_) do
     batches = Laravex.Bus.list_batches()
 
     if batches == [] do
-      IO.puts("No job batches found.")
+      Output.comment("  No job batches found.")
     else
-      IO.puts(
-        String.pad_trailing("ID", 38) <>
+      Output.line(
+        "  <fg=gray>" <>
+          String.pad_trailing("ID", 38) <>
           String.pad_trailing("Name", 18) <>
           String.pad_trailing("Total", 8) <>
           String.pad_trailing("Pending", 10) <>
-          String.pad_trailing("Failed", 8) <> "Cancelled"
+          String.pad_trailing("Failed", 8) <>
+          "Cancelled</>"
       )
 
       Enum.each(batches, fn b ->
-        IO.puts(
-          String.pad_trailing(to_string(b.id), 38) <>
+        Output.line(
+          "  " <>
+            String.pad_trailing(to_string(b.id), 38) <>
             String.pad_trailing(to_string(b.name || ""), 18) <>
             String.pad_trailing(to_string(b.total_jobs), 8) <>
             String.pad_trailing(to_string(b.pending_jobs), 10) <>
@@ -359,32 +433,34 @@ defmodule Laravex.Console.Kernel do
 
   def cmd_queue_batch(["cancel", id | _]) do
     case Laravex.Bus.cancel(id) do
-      {:ok, batch} -> IO.puts("Batch [#{batch.id}] cancelled.")
-      {:error, :not_found} -> IO.puts(:stderr, "No batch matches [#{id}].")
+      {:ok, batch} -> Output.info("Batch [#{batch.id}] cancelled.")
+      {:error, :not_found} -> Output.error("No batch matches the given ID [#{id}].")
     end
   end
 
   def cmd_queue_batch([id | _]) do
     case Laravex.Bus.find_batch(id) do
       nil ->
-        IO.puts(:stderr, "No batch matches [#{id}].")
+        Output.error("No batch matches the given ID [#{id}].")
 
       b ->
-        IO.puts("ID: #{b.id}")
-        IO.puts("Name: #{b.name}")
-        IO.puts("Total / Pending / Failed: #{b.total_jobs} / #{b.pending_jobs} / #{b.failed_jobs}")
-        IO.puts("Failed job ids: #{inspect(b.failed_job_ids)}")
-        IO.puts("Created: #{b.created_at}")
-        IO.puts("Finished: #{b.finished_at}")
-        IO.puts("Cancelled: #{b.cancelled_at}")
+        Output.section("Batch")
+        Output.two_column_detail("ID", b.id)
+        Output.two_column_detail("Name", b.name)
+        Output.two_column_detail("Total / Pending / Failed", "#{b.total_jobs} / #{b.pending_jobs} / #{b.failed_jobs}")
+        Output.two_column_detail("Failed job ids", inspect(b.failed_job_ids))
+        Output.two_column_detail("Created", b.created_at)
+        Output.two_column_detail("Finished", b.finished_at)
+        Output.two_column_detail("Cancelled", b.cancelled_at)
+        Output.writeln()
     end
   end
 
-  def cmd_queue_batch(_), do: IO.puts("Usage: artisan queue:batch {id} | queue:batch cancel {id}")
+  def cmd_queue_batch(_), do: usage("queue:batch", "{id} | cancel {id}")
 
   def cmd_prune_tokens(_) do
     Laravex.Auth.Token.prune_expired()
-    IO.puts("Expired API tokens pruned.")
+    Output.info("Expired API tokens pruned.")
   end
 
   def cmd_db_show(args) do
@@ -398,28 +474,42 @@ defmodule Laravex.Console.Kernel do
       cmd_db_table([table])
     else
       tables = Laravex.Database.Introspection.tables()
-      IO.puts("Database\n")
-      Enum.each(tables, fn t -> IO.puts("  #{t}") end)
+      Output.section("Database")
+
+      Enum.each(tables, fn t ->
+        Output.line("  <info>#{t}</info>")
+      end)
+
+      Output.writeln()
     end
   end
 
   def cmd_db_table([table | _]) when is_binary(table) do
     info = Laravex.Database.Introspection.table_info(table)
-    IO.puts("Table: #{info.name}\n")
-    IO.puts(String.pad_trailing("Column", 24) <> String.pad_trailing("Type", 12) <> "Nullable")
+    Output.section("Table: #{info.name}")
+    Output.line(
+      "  <fg=gray>" <>
+        String.pad_trailing("Column", 24) <>
+        String.pad_trailing("Type", 12) <>
+        "Nullable</>"
+    )
 
     Enum.each(info.columns, fn col ->
-      IO.puts(
-        String.pad_trailing(to_string(col["name"]), 24) <>
+      Output.line(
+        "  <info>" <>
+          String.pad_trailing(to_string(col["name"]), 24) <>
+          "</info>" <>
           String.pad_trailing(to_string(col["type"]), 12) <>
           if(col["notnull"] in [0, "0"], do: "yes", else: "no")
       )
     end)
 
     if info.indexes != [] do
-      IO.puts("\nIndexes:")
-      Enum.each(info.indexes, fn idx -> IO.puts("  #{inspect(idx)}") end)
+      Output.section("Indexes")
+      Enum.each(info.indexes, fn idx -> Output.line("  #{inspect(idx)}") end)
     end
+
+    Output.writeln()
   end
 
   def cmd_db_table(_), do: usage("db:table", "table")
@@ -439,39 +529,41 @@ defmodule Laravex.Console.Kernel do
   def cmd_model_show([name | _]) do
     case Laravex.Database.Introspection.resolve_model(name) do
       nil ->
-        IO.puts(:stderr, "Model [#{name}] not found.")
+        Output.error("Model [#{name}] not found.")
 
       mod ->
         info = Laravex.Database.Introspection.model_info(mod)
-        IO.puts("Model: #{inspect(info.module)}")
-        IO.puts("Table: #{info.table || "?"}")
-        IO.puts("Soft deletes: #{info.soft_deletes?}")
-        IO.puts("Fillable: #{inspect(info.fillable)}")
-        IO.puts("Guarded: #{inspect(info.guarded)}")
-        IO.puts("Casts: #{inspect(info.casts)}")
-        IO.puts("Appends: #{inspect(info.appends)}")
-        IO.puts("Relations: #{inspect(info.relations)}")
+        Output.section(inspect(info.module))
+        Output.two_column_detail("Table", info.table || "?")
+        Output.two_column_detail("Soft deletes", info.soft_deletes?)
+        Output.two_column_detail("Fillable", inspect(info.fillable))
+        Output.two_column_detail("Guarded", inspect(info.guarded))
+        Output.two_column_detail("Casts", inspect(info.casts))
+        Output.two_column_detail("Appends", inspect(info.appends))
+        Output.two_column_detail("Relations", inspect(info.relations))
 
         if info.columns != [] do
-          IO.puts("\nColumns:")
+          Output.section("Columns")
 
           Enum.each(info.columns, fn col ->
-            IO.puts("  #{col["name"]} (#{col["type"]})")
+            Output.line("  <info>#{col["name"]}</info> <fg=gray>(#{col["type"]})</>")
           end)
         end
+
+        Output.writeln()
     end
   end
 
-  def cmd_model_show(_), do: IO.puts("Usage: artisan model:show {Model}")
+  def cmd_model_show(_), do: usage("model:show", "{Model}")
 
   def cmd_event_cache(_) do
     Laravex.Events.EventCache.cache!()
-    IO.puts("Events cached successfully.")
+    Output.info("Events cached successfully.")
   end
 
   def cmd_event_clear(_) do
     Laravex.Events.EventCache.clear!()
-    IO.puts("Cached events cleared.")
+    Output.info("Cached events cleared successfully.")
   end
 
   def cmd_schedule(_), do: Laravex.Console.Schedule.run()
@@ -486,7 +578,7 @@ defmodule Laravex.Console.Kernel do
         n -> n
       end
 
-    IO.puts("Running scheduled tasks every #{sleep}s…")
+    Output.info("Running scheduled tasks every #{sleep}s…")
 
     Stream.repeatedly(fn ->
       Laravex.Console.Schedule.run()
@@ -500,15 +592,16 @@ defmodule Laravex.Console.Kernel do
     tasks = Laravex.Console.Schedule.all()
 
     if tasks == [] do
-      IO.puts("No scheduled tasks have been defined.")
+      Output.comment("  No scheduled tasks have been defined.")
     else
-      IO.puts(String.pad_trailing("Expression", 24) <> "Command / Callback")
-      IO.puts(String.duplicate("-", 60))
+      Output.line(
+        "  <fg=gray>" <> String.pad_trailing("Expression", 24) <> "Command / Callback</>"
+      )
 
       Enum.each(tasks, fn task ->
         expr = Map.get(task, :expression) || "?"
         label = describe_schedule_task(task)
-        IO.puts(String.pad_trailing(to_string(expr), 24) <> label)
+        Output.line("  <info>#{String.pad_trailing(to_string(expr), 24)}</info>#{label}")
       end)
     end
   end
@@ -519,17 +612,19 @@ defmodule Laravex.Console.Kernel do
     merged = Map.merge(provider_map, runtime_map, fn _k, a, b -> List.wrap(a) ++ List.wrap(b) end)
 
     if map_size(merged) == 0 do
-      IO.puts("No events have been registered.")
+      Output.comment("  No events have been registered.")
     else
       merged
       |> Enum.sort_by(fn {event, _} -> to_string(event) end)
       |> Enum.each(fn {event, listeners} ->
-        IO.puts(inspect(event))
+        Output.line("  <fg=green;options=bold>#{inspect(event)}</>")
 
         Enum.each(Enum.uniq(List.wrap(listeners)), fn listener ->
-          IO.puts("  ⇂ #{inspect(listener)}")
+          Output.line("    <fg=yellow>⇂</> #{inspect(listener)}")
         end)
       end)
+
+      Output.writeln()
     end
   end
 
@@ -551,39 +646,69 @@ defmodule Laravex.Console.Kernel do
   end
 
   def cmd_tinker(_) do
-    IO.puts("Laravex Tinker (exit/quit to leave)")
-    tinker_loop([])
+    elixir = System.version()
+    otp = :erlang.system_info(:otp_release) |> to_string()
+    version = Application.spec(:laravex, :vsn) |> to_string()
+
+    Output.line(
+      "<options=bold>Laravex Tinker</> <fg=gray>v#{version}</> " <>
+        "<fg=gray>(Elixir #{elixir} — OTP #{otp})</>"
+    )
+    Output.line("<fg=gray>Type exit or quit to leave. Use <info>_</info> for the last result.</>")
+    Output.writeln()
+    tinker_loop([], nil)
   end
 
-  def cmd_storage_link(_), do: (Laravex.Filesystem.Storage.link(); IO.puts("The links have been created."))
+  def cmd_storage_link(_) do
+    Laravex.Filesystem.Storage.link()
+    Output.info("The links have been created.")
+  end
 
   def cmd_down(args) do
     opts = parse_down_opts(args)
     Laravex.Foundation.Maintenance.down(opts)
-    IO.puts("Application is now in maintenance mode.")
+    Output.info("Application is now in maintenance mode.")
   end
 
   def cmd_up(_) do
     Laravex.Foundation.Maintenance.up()
-    IO.puts("Application is now live.")
+    Output.info("Application is now live.")
   end
 
   def cmd_about(_) do
-    name = Laravex.Config.Repository.get("app.name", "Laravex")
-    env = Laravex.Config.Repository.get("app.env", "local")
-    debug = Laravex.Config.Repository.get("app.debug", false)
-    maintenance = Laravex.Foundation.Maintenance.enabled?()
-    key? = present?(Laravex.Config.Repository.get("app.key") || Laravex.Env.get("APP_KEY"))
+    cfg = &Laravex.Config.Repository.get/2
+    version = Application.spec(:laravex, :vsn) |> to_string()
+    url = cfg.("app.url", "http://localhost") |> to_string() |> String.replace(~r/^https?:\/\//, "")
+    debug? = truthy_config?(cfg.("app.debug", false))
+    maintenance? = Laravex.Foundation.Maintenance.enabled?()
 
-    IO.puts("""
-    #{name}
-      Environment ................ #{env}
-      Debug ...................... #{debug}
-      Maintenance ................ #{maintenance}
-      APP_KEY .................... #{if key?, do: "set", else: "missing"}
-      Elixir ..................... #{System.version()}
-      OTP ........................ #{:erlang.system_info(:otp_release)}
-    """)
+    Output.section("Environment")
+    Output.two_column_detail("Application Name", cfg.("app.name", "Laravex"))
+    Output.two_column_detail("Laravex Version", version)
+    Output.two_column_detail("Elixir Version", System.version())
+    Output.two_column_detail("OTP Release", :erlang.system_info(:otp_release))
+    Output.two_column_detail("Environment", cfg.("app.env", "production"))
+    Output.two_column_detail("Debug Mode", format_enabled(debug?))
+    Output.two_column_detail("URL", url)
+    Output.two_column_detail("Maintenance Mode", format_enabled(maintenance?))
+    Output.two_column_detail("Timezone", cfg.("app.timezone", "UTC"))
+    Output.two_column_detail("Locale", cfg.("app.locale", "en"))
+
+    Output.section("Cache")
+    Output.two_column_detail("Config", format_cached(config_cached?()))
+    Output.two_column_detail("Events", format_cached(events_cached?()))
+    Output.two_column_detail("Routes", format_cached(routes_cached?()))
+    Output.two_column_detail("Views", format_cached(views_cached?()))
+
+    Output.section("Drivers")
+    Output.two_column_detail("Broadcasting", cfg.("broadcasting.default", "null"))
+    Output.two_column_detail("Cache", cfg.("cache.default", "database"))
+    Output.two_column_detail("Database", cfg.("database.default", "sqlite"))
+    Output.two_column_detail("Logs", cfg.("logging.default", "stack"))
+    Output.two_column_detail("Mail", cfg.("mail.default", "log"))
+    Output.two_column_detail("Queue", cfg.("queue.default", "database"))
+    Output.two_column_detail("Session", cfg.("session.driver", "database"))
+    Output.writeln()
   end
 
   def cmd_env(args) do
@@ -593,13 +718,11 @@ defmodule Laravex.Console.Kernel do
         _ -> nil
       end)
 
-    env = Laravex.Env.all()
-
-    env
+    Laravex.Env.all()
     |> Enum.sort_by(fn {k, _} -> k end)
     |> Enum.each(fn {k, v} ->
       if is_nil(only) or only == k do
-        IO.puts("#{k}=#{redact_env(k, v)}")
+        Output.line("<info>#{k}</info>=<comment>#{redact_env(k, v)}</comment>")
       end
     end)
 
@@ -611,12 +734,12 @@ defmodule Laravex.Console.Kernel do
     existing = Laravex.Env.get("APP_KEY")
 
     if present?(existing) and not force? do
-      IO.puts("APP_KEY already set. Use --force to overwrite.")
+      Output.warn("Application key already set. Use --force to overwrite.")
     else
       key = "base64:" <> Base.encode64(:crypto.strong_rand_bytes(32))
       Laravex.Env.write!("APP_KEY", key)
       Laravex.Config.Repository.load!(Laravex.Foundation.Application.base_path())
-      IO.puts("Application key set successfully.")
+      Output.info("Application key set successfully.")
     end
   end
 
@@ -705,7 +828,9 @@ defmodule Laravex.Console.Kernel do
   def cmd_install_broadcasting(_), do: Laravex.Install.broadcasting()
   def cmd_install_starter(_), do: Laravex.Install.starter_kit()
 
-  defp usage(cmd, arg), do: IO.puts("Usage: artisan #{cmd} #{arg}")
+  defp usage(cmd, arg) do
+    Output.line("<comment>Usage:</comment> artisan <info>#{cmd}</info> #{arg}")
+  end
 
   defp parse_down_opts(args) do
     Enum.reduce(args, [], fn
@@ -718,6 +843,31 @@ defmodule Laravex.Console.Kernel do
 
   defp present?(v), do: not (is_nil(v) or v == "")
 
+  defp truthy_config?(v) when v in [true, "true", "1", 1, "on", "yes"], do: true
+  defp truthy_config?(_), do: false
+
+  defp format_enabled(true), do: "<fg=yellow;options=bold>ENABLED</>"
+  defp format_enabled(false), do: "OFF"
+
+  defp format_cached(true), do: "<fg=green;options=bold>CACHED</>"
+  defp format_cached(false), do: "<fg=yellow;options=bold>NOT CACHED</>"
+
+  defp config_cached? do
+    base = Laravex.Foundation.Application.base_path()
+    File.exists?(Path.join(base, "bootstrap/cache/config.term"))
+  end
+
+  defp events_cached?, do: Laravex.Events.EventCache.exists?()
+  defp routes_cached?, do: Laravex.Routing.RouteCache.exists?()
+
+  defp views_cached? do
+    base = Laravex.Foundation.Application.base_path()
+    dir = Path.join(base, "storage/framework/views")
+
+    File.dir?(dir) and
+      match?([_ | _], Path.wildcard(Path.join(dir, "*.blade")))
+  end
+
   defp redact_env(key, value) do
     sensitive = ~w(KEY SECRET PASSWORD TOKEN PRIVATE)
     upper = String.upcase(to_string(key))
@@ -729,9 +879,12 @@ defmodule Laravex.Console.Kernel do
     end
   end
 
-  defp tinker_loop(bindings) do
-    case IO.gets(">>> ") do
+  defp tinker_loop(bindings, last) do
+    prompt = Output.paint("<comment>>>> </comment>")
+
+    case IO.gets(prompt) do
       :eof ->
+        Output.writeln()
         :ok
 
       {:error, _} ->
@@ -741,24 +894,51 @@ defmodule Laravex.Console.Kernel do
         line = String.trim(line)
 
         cond do
-          line in ["exit", "quit"] ->
+          line in ["exit", "quit", ".exit"] ->
+            Output.comment("Goodbye.")
             :ok
 
           line == "" ->
-            tinker_loop(bindings)
+            tinker_loop(bindings, last)
 
           true ->
+            bindings = Keyword.put(bindings, :_, last)
+
             try do
               {result, new_bindings} = Code.eval_string(line, bindings)
-              IO.inspect(result)
-              tinker_loop(Keyword.merge(bindings, new_bindings))
+              tinker_dump(result)
+              tinker_loop(Keyword.merge(bindings, new_bindings) |> Keyword.put(:_, result), result)
             rescue
               e ->
-                IO.puts(:stderr, Exception.message(e))
-                tinker_loop(bindings)
+                Output.error(Exception.format(:error, e, []) |> String.trim())
+                tinker_loop(bindings, last)
+            catch
+              kind, reason ->
+                Output.error(Exception.format(kind, reason, []) |> String.trim())
+                tinker_loop(bindings, last)
             end
         end
     end
+  end
+
+  defp tinker_dump(result) do
+    inspected =
+      inspect(result,
+        pretty: true,
+        syntax_colors: [
+          atom: :cyan,
+          string: :green,
+          list: :default_color,
+          boolean: :magenta,
+          nil: :magenta,
+          number: :yellow,
+          map: :default_color,
+          tuple: :default_color,
+          binary: :green
+        ]
+      )
+
+    IO.puts(inspected)
   end
 
   defp describe_schedule_task(%{opts: opts} = task) do

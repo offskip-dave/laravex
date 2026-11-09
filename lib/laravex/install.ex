@@ -1,6 +1,8 @@
 defmodule Laravex.Install do
   @moduledoc "install:* commands for optional Laravel-like features."
 
+  alias Laravex.Console.Output
+
   def api do
     base = Laravex.Foundation.Application.base_path()
 
@@ -28,8 +30,8 @@ defmodule Laravex.Install do
     end
     """)
 
-    IO.puts("API scaffolding installed (routes/api.ex + token auth).")
-    IO.puts("Routes.Api is auto-registered on boot when the module is compiled. Run: mix compile && ./artisan migrate")
+    Output.info("API scaffolding installed successfully.")
+    Output.comment("Routes.Api auto-registers on boot. Run: mix compile && ./artisan migrate")
     :ok
   end
 
@@ -63,7 +65,7 @@ defmodule Laravex.Install do
     }
     """)
 
-    IO.puts("Broadcasting scaffolding installed.")
+    Output.info("Broadcasting scaffolding installed successfully.")
     :ok
   end
 
@@ -229,7 +231,7 @@ defmodule Laravex.Install do
     end
     """)
 
-    IO.puts("Starter kit installed (login, forgot/reset password, AuthController, routes/auth.ex).")
+    Output.info("Starter kit installed successfully.")
     :ok
   end
 end

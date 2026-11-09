@@ -1,9 +1,12 @@
 defmodule Laravex.Console.Prompts do
   @moduledoc "Laravel Prompts lite for Artisan (IO wrappers)."
 
+  alias Laravex.Console.Output
+
   def text(label, opts \\ []) do
     default = Keyword.get(opts, :default, "")
-    IO.write("#{label}#{if default != "", do: " [#{default}]", else: ""}: ")
+    suffix = if default != "", do: " [#{default}]", else: ""
+    Output.write(Output.paint("<question>#{label}#{suffix}</question>: "))
     line = IO.gets("") |> to_string() |> String.trim()
     if line == "", do: default, else: line
   end
@@ -11,7 +14,7 @@ defmodule Laravex.Console.Prompts do
   def confirm(label, opts \\ []) do
     default = Keyword.get(opts, :default, false)
     hint = if default, do: "Y/n", else: "y/N"
-    IO.write("#{label} (#{hint}): ")
+    Output.write(Output.paint("<question>#{label}</question> (#{hint}): "))
     line = IO.gets("") |> to_string() |> String.trim() |> String.downcase()
 
     cond do
@@ -23,13 +26,15 @@ defmodule Laravex.Console.Prompts do
   end
 
   def select(label, options) when is_list(options) do
-    IO.puts(label)
+    Output.comment(label)
 
     options
     |> Enum.with_index(1)
-    |> Enum.each(fn {opt, i} -> IO.puts("  #{i}) #{opt}") end)
+    |> Enum.each(fn {opt, i} ->
+      Output.line("  <info>#{i}</info>) #{opt}")
+    end)
 
-    IO.write("Choice: ")
+    Output.write(Output.paint("<question>Choice</question>: "))
     line = IO.gets("") |> to_string() |> String.trim()
 
     case Integer.parse(line) do
@@ -43,7 +48,7 @@ defmodule Laravex.Console.Prompts do
     text(label)
   end
 
-  def info(msg), do: IO.puts(msg)
-  def error(msg), do: IO.puts(:stderr, msg)
-  def warn(msg), do: IO.puts("WARN: #{msg}")
+  def info(msg), do: Output.info(msg)
+  def error(msg), do: Output.error(msg)
+  def warn(msg), do: Output.warn(msg)
 end
