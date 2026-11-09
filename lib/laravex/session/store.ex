@@ -23,11 +23,46 @@ defmodule Laravex.Session.Store do
   def start(request) do
     ensure()
     cookie = Laravex.Config.Repository.get("session.cookie", "laravex-session")
-    sid = Map.get(request.cookies, cookie) || Laravex.Support.Helpers.str_random(40)
-    session = load(sid)
-    maybe_lottery_gc()
-    %{request | session_id: sid, session: session}
+    raw = Map.get(request.cookies, cookie)
+
+    if cookie_driver?() do
+      session = Laravex.Session.Drivers.Cookie.open(raw)
+      sid = Map.get(session, "_sid") || Laravex.Support.Helpers.str_random(40)
+      session = Map.put_new(session, "_sid", sid)
+      _ = Laravex.Session.Drivers.Cookie.write(sid, session)
+      %{request | session_id: sid, session: session}
+    else
+      sid = unwrap_sid(raw) || Laravex.Support.Helpers.str_random(40)
+      session = load(sid)
+      maybe_lottery_gc()
+      %{request | session_id: sid, session: session}
+    end
   end
+
+  defp cookie_driver? do
+    to_string(Laravex.Config.Repository.get("session.driver", "file")) == "cookie"
+  end
+
+  defp unwrap_sid(nil), do: nil
+  defp unwrap_sid(""), do: nil
+
+  defp unwrap_sid(raw) do
+    encrypt? = truthy?(Laravex.Config.Repository.get("session.encrypt", false))
+
+    if encrypt? do
+      case Laravex.Encryption.Crypt.decrypt(raw) do
+        sid when is_binary(sid) -> sid
+        _ -> nil
+      end
+    else
+      raw
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp truthy?(v) when v in [true, "true", "1", 1], do: true
+  defp truthy?(_), do: false
 
   def get(request_or_sid, key, default \\ nil)
 

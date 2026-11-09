@@ -55,17 +55,7 @@ defmodule Laravex.Database.Adapters.Postgres do
     :ok
   end
 
-  defp cfg do
-    key =
-      case to_string(Laravex.Config.Repository.get("database.default", "pgsql")) do
-        "postgres" -> "pgsql"
-        other -> other
-      end
-
-    Laravex.Config.Repository.get("database.connections.#{key}") ||
-      Laravex.Config.Repository.get("database.connections.pgsql") ||
-      %{}
-  end
+  defp cfg, do: Laravex.Database.Connection.config()
 
   defp run_psql(sql) do
     c = cfg()

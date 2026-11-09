@@ -30,6 +30,15 @@ defmodule Laravex.MixProject do
 
   defp deps do
     [
+      # Optional native drivers (selected via DB_CLIENT=native / REDIS_CLIENT=native / etc.)
+      {:db_connection, "~> 2.7"},
+      {:postgrex, "~> 0.19"},
+      {:myxql, "~> 0.7"},
+      {:exqlite, "~> 0.27"},
+      {:tds, "~> 2.3"},
+      {:redix, "~> 1.5"},
+      {:memcachex, "~> 0.5"},
+      {:req, "~> 0.5"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end

@@ -14,9 +14,13 @@ defmodule Laravex.Database.Query do
             offset: nil,
             distinct?: false,
             columns: ["*"],
-            lock: nil
+            lock: nil,
+            connection: nil
 
   def table(name), do: %__MODULE__{table: name}
+
+  @doc "Use a named database connection for this query (Laravel `DB::connection`)."
+  def connection(%__MODULE__{} = q, name), do: %{q | connection: name}
 
   def select(%__MODULE__{} = q, cols) when is_list(cols), do: %{q | columns: cols}
 
@@ -475,7 +479,15 @@ defmodule Laravex.Database.Query do
   end
 
   def get(%__MODULE__{} = q) do
-    Laravex.Database.Connection.query(to_sql(q), all_bindings(q))
+    on_connection(q, fn ->
+      Laravex.Database.Connection.query(to_sql(q), all_bindings(q))
+    end)
+  end
+
+  defp on_connection(%__MODULE__{connection: nil}, fun), do: fun.()
+
+  defp on_connection(%__MODULE__{connection: name}, fun) do
+    Laravex.Database.Connection.using_connection(name, fun)
   end
 
   defp all_bindings(%__MODULE__{} = q) do
@@ -646,31 +658,37 @@ defmodule Laravex.Database.Query do
   end
 
   def update(%__MODULE__{} = q, attrs) when is_map(attrs) do
-    sets =
-      attrs
-      |> Enum.map(fn {k, _} -> "#{k} = ?" end)
-      |> Enum.join(", ")
+    on_connection(q, fn ->
+      sets =
+        attrs
+        |> Enum.map(fn {k, _} -> "#{k} = ?" end)
+        |> Enum.join(", ")
 
-    vals = Enum.map(attrs, fn {_, v} -> v end)
-    where_sql = where_clause(q)
+      vals = Enum.map(attrs, fn {_, v} -> v end)
+      where_sql = where_clause(q)
 
-    Laravex.Database.Connection.execute(
-      "UPDATE #{q.table} SET #{sets}#{where_sql}",
-      vals ++ q.bindings
-    )
+      Laravex.Database.Connection.execute(
+        "UPDATE #{q.table} SET #{sets}#{where_sql}",
+        vals ++ q.bindings
+      )
+    end)
   end
 
   def delete(%__MODULE__{} = q) do
-    Laravex.Database.Connection.execute("DELETE FROM #{q.table}#{where_clause(q)}", q.bindings)
+    on_connection(q, fn ->
+      Laravex.Database.Connection.execute("DELETE FROM #{q.table}#{where_clause(q)}", q.bindings)
+    end)
   end
 
   def count(%__MODULE__{} = q) do
-    sql = "SELECT COUNT(*) AS aggregate FROM #{q.table}#{join_clause(q)}#{where_clause(q)}"
+    on_connection(q, fn ->
+      sql = "SELECT COUNT(*) AS aggregate FROM #{q.table}#{join_clause(q)}#{where_clause(q)}"
 
-    case Laravex.Database.Connection.query(sql, q.bindings) do
-      [%{"aggregate" => n}] -> n
-      _ -> 0
-    end
+      case Laravex.Database.Connection.query(sql, q.bindings) do
+        [%{"aggregate" => n}] -> n
+        _ -> 0
+      end
+    end)
   end
 
   @doc "Process results in pages of `size` (offset-based)."

@@ -61,8 +61,14 @@ defmodule Laravex.Http.Kernel do
       when is_binary(sid) do
     Laravex.Session.Store.save(sid, session)
     name = Laravex.Config.Repository.get("session.cookie", "laravex-session")
-    encrypt? = truthy?(Laravex.Config.Repository.get("session.encrypt", false))
-    value = if encrypt?, do: Laravex.Encryption.Crypt.encrypt(sid), else: sid
+
+    value =
+      if to_string(Laravex.Config.Repository.get("session.driver", "file")) == "cookie" do
+        Laravex.Session.Drivers.Cookie.seal(Map.put(session, "_sid", sid))
+      else
+        encrypt? = truthy?(Laravex.Config.Repository.get("session.encrypt", false))
+        if encrypt?, do: Laravex.Encryption.Crypt.encrypt(sid), else: sid
+      end
 
     response =
       Laravex.Http.Response.with_cookie(response, name, value,

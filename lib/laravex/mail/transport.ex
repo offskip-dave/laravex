@@ -7,7 +7,7 @@ end
 defmodule Laravex.Mail.Resolver do
   @moduledoc false
 
-  @supported ~w(log array smtp)
+  @supported ~w(log array smtp ses postmark resend)
 
   def module(driver) when is_binary(driver) do
     unless driver in @supported do
@@ -20,6 +20,9 @@ defmodule Laravex.Mail.Resolver do
       "log" -> Laravex.Mail.Transports.Log
       "array" -> Laravex.Mail.Transports.Array
       "smtp" -> Laravex.Mail.Transports.Smtp
+      "ses" -> Laravex.Mail.Transports.Ses
+      "postmark" -> Laravex.Mail.Transports.Postmark
+      "resend" -> Laravex.Mail.Transports.Resend
     end
   end
 end

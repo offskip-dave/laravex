@@ -39,7 +39,6 @@ defmodule Laravex.Queue.Connections.Redis do
     case Laravex.Support.RedisClient.brpop(key, timeout, redis_opts()) do
       {:ok, payload} -> {:ok, payload}
       :error -> :error
-      {:error, reason} -> {:error, reason}
     end
   end
 

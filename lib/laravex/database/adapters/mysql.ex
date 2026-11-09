@@ -45,14 +45,7 @@ defmodule Laravex.Database.Adapters.Mysql do
     :ok
   end
 
-  defp cfg do
-    default = to_string(Laravex.Config.Repository.get("database.default", "mysql"))
-    key = if default == "mariadb", do: "mariadb", else: "mysql"
-
-    Laravex.Config.Repository.get("database.connections.#{key}") ||
-      Laravex.Config.Repository.get("database.connections.mysql") ||
-      %{}
-  end
+  defp cfg, do: Laravex.Database.Connection.config()
 
   defp run_mysql(sql) do
     c = cfg()

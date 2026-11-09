@@ -27,6 +27,8 @@ Laravex eases common tasks used in many web projects, such as:
 > **Elixir, not PHP. Laravel conventions, not Phoenix conventions.**  
 > No `lib/my_app_web`, no contexts-as-primary UX, no LiveView as the default shape. If you know Laravel, Laravex feels familiar from day one.
 
+Drivers default to zero-Hex CLIs/TCP; set `DB_CLIENT=native` / `REDIS_CLIENT=native` (and similar) for pooled Hex clients. See [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Learning Laravex
 
 The [project wiki](https://github.com/offskip-dave/laravex/wiki) is the documentation home — installation, the request lifecycle, Eloquex, Blade, Artisan, and more. Agent/contributor notes live in [`AGENTS.md`](AGENTS.md). Deployment notes are in [`docs/DEPLOY.md`](docs/DEPLOY.md).

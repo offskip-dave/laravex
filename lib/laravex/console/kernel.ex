@@ -13,7 +13,9 @@ defmodule Laravex.Console.Kernel do
     "db:seed" => {&__MODULE__.cmd_seed/1, "Seed the database"},
     "db:wipe" => {&__MODULE__.cmd_wipe/1, "Drop all tables"},
     "db:show" => {&__MODULE__.cmd_db_show/1, "Display information about the given database"},
+    "db:table" => {&__MODULE__.cmd_db_table/1, "Show the structure of a database table"},
     "model:show" => {&__MODULE__.cmd_model_show/1, "Show information about an Eloquex model"},
+    "vendor:publish" => {&__MODULE__.cmd_vendor_publish/1, "Publish tagged framework assets"},
     "route:list" => {&__MODULE__.cmd_routes/1, "List routes"},
     "config:cache" => {&__MODULE__.cmd_config_cache/1, "Cache configuration"},
     "config:clear" => {&__MODULE__.cmd_config_clear/1, "Clear configuration cache"},
@@ -27,6 +29,7 @@ defmodule Laravex.Console.Kernel do
     "optimize" => {&__MODULE__.cmd_optimize/1, "Cache framework bootstrap files"},
     "optimize:clear" => {&__MODULE__.cmd_optimize_clear/1, "Remove cached bootstrap files"},
     "queue:work" => {&__MODULE__.cmd_queue_work/1, "Process queue jobs"},
+    "queue:listen" => {&__MODULE__.cmd_queue_listen/1, "Listen for queue jobs continuously"},
     "queue:failed" => {&__MODULE__.cmd_queue_failed/1, "List all of the failed queue jobs"},
     "queue:retry" => {&__MODULE__.cmd_queue_retry/1, "Retry a failed queue job"},
     "queue:forget" => {&__MODULE__.cmd_queue_forget/1, "Delete a failed queue job"},
@@ -35,6 +38,7 @@ defmodule Laravex.Console.Kernel do
     "queue:batch" => {&__MODULE__.cmd_queue_batch/1, "Show or cancel a job batch"},
     "sanctum:prune-expired" => {&__MODULE__.cmd_prune_tokens/1, "Prune expired API tokens"},
     "schedule:run" => {&__MODULE__.cmd_schedule/1, "Run due scheduled tasks"},
+    "schedule:work" => {&__MODULE__.cmd_schedule_work/1, "Start the schedule worker loop"},
     "schedule:list" => {&__MODULE__.cmd_schedule_list/1, "List all scheduled tasks"},
     "event:list" => {&__MODULE__.cmd_event_list/1, "List registered events and listeners"},
     "event:cache" => {&__MODULE__.cmd_event_cache/1, "Cache the event → listener map"},
@@ -68,6 +72,11 @@ defmodule Laravex.Console.Kernel do
     "make:test" => {&__MODULE__.cmd_make_test/1, "Create a test class"},
     "make:observer" => {&__MODULE__.cmd_make_observer/1, "Create a model observer"},
     "make:enum" => {&__MODULE__.cmd_make_enum/1, "Create an enum"},
+    "make:component" => {&__MODULE__.cmd_make_component/1, "Create a Blade component"},
+    "make:channel" => {&__MODULE__.cmd_make_channel/1, "Create a broadcast channel"},
+    "make:cast" => {&__MODULE__.cmd_make_cast/1, "Create a custom cast class"},
+    "make:exception" => {&__MODULE__.cmd_make_exception/1, "Create an exception class"},
+    "make:scope" => {&__MODULE__.cmd_make_scope/1, "Create an Eloquex query scope"},
     "install:api" => {&__MODULE__.cmd_install_api/1, "Install API routes and tokens"},
     "install:broadcasting" => {&__MODULE__.cmd_install_broadcasting/1, "Install broadcasting"},
     "install:starter-kit" => {&__MODULE__.cmd_install_starter/1, "Install auth starter kit"}
@@ -254,6 +263,26 @@ defmodule Laravex.Console.Kernel do
     Laravex.Queue.Worker.work(once: once)
   end
 
+  def cmd_queue_listen(args) do
+    sleep =
+      case Enum.find_value(args, fn
+             "--sleep=" <> n -> String.to_integer(n)
+             _ -> nil
+           end) do
+        nil -> 1
+        n -> n
+      end
+
+    IO.puts("Listening for queue jobs…")
+
+    Stream.repeatedly(fn ->
+      Laravex.Queue.Worker.work(once: true)
+      Process.sleep(sleep * 1000)
+      :ok
+    end)
+    |> Stream.run()
+  end
+
   def cmd_queue_failed(_) do
     jobs = Laravex.Queue.Worker.failed_jobs()
 
@@ -366,22 +395,45 @@ defmodule Laravex.Console.Kernel do
       end)
 
     if table do
-      info = Laravex.Database.Introspection.table_info(table)
-      IO.puts("Table: #{info.name}\n")
-      IO.puts(String.pad_trailing("Column", 24) <> String.pad_trailing("Type", 12) <> "Nullable")
-
-      Enum.each(info.columns, fn col ->
-        IO.puts(
-          String.pad_trailing(to_string(col["name"]), 24) <>
-            String.pad_trailing(to_string(col["type"]), 12) <>
-            if(col["notnull"] in [0, "0"], do: "yes", else: "no")
-        )
-      end)
+      cmd_db_table([table])
     else
       tables = Laravex.Database.Introspection.tables()
       IO.puts("Database\n")
       Enum.each(tables, fn t -> IO.puts("  #{t}") end)
     end
+  end
+
+  def cmd_db_table([table | _]) when is_binary(table) do
+    info = Laravex.Database.Introspection.table_info(table)
+    IO.puts("Table: #{info.name}\n")
+    IO.puts(String.pad_trailing("Column", 24) <> String.pad_trailing("Type", 12) <> "Nullable")
+
+    Enum.each(info.columns, fn col ->
+      IO.puts(
+        String.pad_trailing(to_string(col["name"]), 24) <>
+          String.pad_trailing(to_string(col["type"]), 12) <>
+          if(col["notnull"] in [0, "0"], do: "yes", else: "no")
+      )
+    end)
+
+    if info.indexes != [] do
+      IO.puts("\nIndexes:")
+      Enum.each(info.indexes, fn idx -> IO.puts("  #{inspect(idx)}") end)
+    end
+  end
+
+  def cmd_db_table(_), do: usage("db:table", "table")
+
+  def cmd_vendor_publish(args) do
+    tag =
+      Enum.find_value(args, fn
+        "--tag=" <> t -> t
+        "--provider=" <> p -> p
+        t -> if String.starts_with?(t, "-"), do: nil, else: t
+      end) || "laravex"
+
+    force? = "--force" in args
+    Laravex.Publish.publish(tag, force: force?)
   end
 
   def cmd_model_show([name | _]) do
@@ -423,6 +475,26 @@ defmodule Laravex.Console.Kernel do
   end
 
   def cmd_schedule(_), do: Laravex.Console.Schedule.run()
+
+  def cmd_schedule_work(args) do
+    sleep =
+      case Enum.find_value(args, fn
+             "--sleep=" <> n -> String.to_integer(n)
+             _ -> nil
+           end) do
+        nil -> 60
+        n -> n
+      end
+
+    IO.puts("Running scheduled tasks every #{sleep}s…")
+
+    Stream.repeatedly(fn ->
+      Laravex.Console.Schedule.run()
+      Process.sleep(sleep * 1000)
+      :ok
+    end)
+    |> Stream.run()
+  end
 
   def cmd_schedule_list(_) do
     tasks = Laravex.Console.Schedule.all()
@@ -618,6 +690,16 @@ defmodule Laravex.Console.Kernel do
 
   def cmd_make_enum([name | _]), do: Laravex.Generators.make_enum(name)
   def cmd_make_enum(_), do: usage("make:enum", "Name")
+  def cmd_make_component([name | _]), do: Laravex.Generators.make_component(name)
+  def cmd_make_component(_), do: usage("make:component", "Name")
+  def cmd_make_channel([name | _]), do: Laravex.Generators.make_channel(name)
+  def cmd_make_channel(_), do: usage("make:channel", "Name")
+  def cmd_make_cast([name | _]), do: Laravex.Generators.make_cast(name)
+  def cmd_make_cast(_), do: usage("make:cast", "Name")
+  def cmd_make_exception([name | _]), do: Laravex.Generators.make_exception(name)
+  def cmd_make_exception(_), do: usage("make:exception", "Name")
+  def cmd_make_scope([name | _]), do: Laravex.Generators.make_scope(name)
+  def cmd_make_scope(_), do: usage("make:scope", "Name")
 
   def cmd_install_api(_), do: Laravex.Install.api()
   def cmd_install_broadcasting(_), do: Laravex.Install.broadcasting()

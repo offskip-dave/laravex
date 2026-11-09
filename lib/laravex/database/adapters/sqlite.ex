@@ -4,7 +4,7 @@ defmodule Laravex.Database.Adapters.Sqlite do
 
   @impl true
   def path do
-    configured = Laravex.Config.Repository.get("database.connections.sqlite.database")
+    configured = Map.get(Laravex.Database.Connection.config(), "database")
 
     if is_binary(configured) and configured != "" do
       configured

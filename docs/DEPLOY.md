@@ -1,6 +1,6 @@
 # Production deployment
 
-Laravex ships **zero runtime Hex dependencies**. HTTP, database, cache, queue, mail, and storage drivers use OTP stdlib plus optional host CLIs (`sqlite3`, `psql`, `mysql`, `redis-server` reachable via TCP, SMTP, S3-compatible HTTP).
+Laravex defaults to **zero-Hex drivers** (CLI DB, RESP `:gen_tcp`, SMTP, S3 `:httpc`). Optional **native Hex clients** activate when configured (`DB_CLIENT=native`, `REDIS_CLIENT=native`, etc.).
 
 ## HTTP
 
@@ -10,25 +10,34 @@ Laravex ships **zero runtime Hex dependencies**. HTTP, database, cache, queue, m
 
 ## Database
 
-| `DB_CONNECTION` | Requirement |
+| `DB_CONNECTION` | Default (`DB_CLIENT=cli`) | Native (`DB_CLIENT=native`) |
+|---|---|---|
+| `sqlite` | `sqlite3` CLI | Exqlite + DBConnection pool |
+| `pgsql` / `postgres` | `psql` CLI | Postgrex pool |
+| `mysql` / `mariadb` | `mysql` CLI | MyXQL pool |
+| `sqlsrv` | not available | TDS pool |
+
+Multi-connection: `Laravex.Database.Connection.using_connection/2`, query `connection/2`, model `connection/1`. Pool size: `DB_POOL_SIZE` / connection `pool` key.
+
+## Redis
+
+Default RESP over `:gen_tcp`. Set `REDIS_CLIENT=native` for Redix pools; `REDIS_TLS=true` for SSL. Best-effort cluster slot routing via `Laravex.Support.RedisCluster` (not Sentinel).
+
+## Cache / session / queue
+
+| Feature | Drivers |
 |---|---|
-| `sqlite` (default) | `sqlite3` CLI |
-| `pgsql` / `postgres` | `psql` CLI + running PostgreSQL |
-| `mysql` / `mariadb` | `mysql` CLI + running MySQL/MariaDB |
-
-Set credentials in `.env` (`DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`).
-
-## Redis (optional)
-
-Set `CACHE_STORE=redis`, `SESSION_DRIVER=redis`, or `QUEUE_CONNECTION=redis` with `REDIS_HOST` / `REDIS_PORT`. Laravex speaks RESP over `:gen_tcp` (no `redix` Hex package).
+| Cache | array · file · database · redis · **memcached** |
+| Session | file · database · redis · **cookie** |
+| Queue | sync · database · deferred · redis · **sqs** |
 
 ## Mail
 
-`MAIL_MAILER=smtp` uses the built-in SMTP transport (`MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`).
+`log` · `array` · `smtp` · **ses** · **postmark** · **resend** (`MAIL_MAILER=…`).
 
 ## Filesystems
 
-`FILESYSTEM_DISK=s3` uses `:httpc` with optional AWS SigV4 when `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are set; otherwise configure `AWS_ENDPOINT` for MinIO-style endpoints.
+`FILESYSTEM_DISK=s3` supports single PUT, multipart upload (>5MB), and ranged `stream_get/3`.
 
 ## Broadcasting
 
@@ -36,8 +45,9 @@ Set `CACHE_STORE=redis`, `SESSION_DRIVER=redis`, or `QUEUE_CONNECTION=redis` wit
 
 ## Checklist
 
-1. `mix compile` / release build in CI
+1. `mix compile --warnings-as-errors` / release build in CI
 2. Run migrations: `./artisan migrate --force`
 3. `mix test` on the target branch
 4. Configure process supervisor (systemd, Fly, etc.) for the OTP application + reverse proxy
 5. Point health checks at `/up` or JSON `/health`
+6. For schedule/queue daemons: `./artisan schedule:work`, `./artisan queue:listen`

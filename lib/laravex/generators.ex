@@ -453,6 +453,67 @@ defmodule Laravex.Generators do
     """)
   end
 
+  def make_component(name) do
+    stub("View/Components", name, """
+    defmodule App.View.Components.#{name} do
+      @moduledoc "Blade component."
+
+      def render(assigns) do
+        Laravex.View.make("components.#{Macro.underscore(name)}", assigns)
+      end
+    end
+    """)
+
+    make_view("components/#{Macro.underscore(name)}")
+  end
+
+  def make_channel(name) do
+    stub("Broadcasting", name, """
+    defmodule App.Broadcasting.#{name} do
+      @moduledoc "Broadcast channel authorization."
+
+      def join(_user, _channel, _request), do: true
+    end
+    """)
+  end
+
+  def make_cast(name) do
+    stub("Casts", name, """
+    defmodule App.Casts.#{name} do
+      @moduledoc "Custom Eloquex cast."
+
+      def get(_model, _key, value, _attributes), do: value
+      def set(_model, _key, value, _attributes), do: value
+    end
+    """)
+  end
+
+  def make_exception(name) do
+    stub("Exceptions", name, """
+    defmodule App.Exceptions.#{name} do
+      defexception message: "#{name}", plug_status: 500
+
+      @impl true
+      def exception(opts) do
+        msg = Keyword.get(opts, :message, "#{name}")
+        %__MODULE__{message: msg}
+      end
+    end
+    """)
+  end
+
+  def make_scope(name) do
+    stub("Models/Scopes", name, """
+    defmodule App.Models.Scopes.#{name} do
+      @moduledoc "Reusable Eloquex query scope."
+
+      def apply(query) do
+        query
+      end
+    end
+    """)
+  end
+
   def make_provider(name) do
     stub("Providers", name, """
     defmodule App.Providers.#{name} do

@@ -25,11 +25,23 @@ defmodule Laravex.Database.Model do
       def query(opts \\ []) do
         q = Laravex.Database.Model.__query_base__(__MODULE__, unquote(soft_deletes), opts)
 
+        q =
+          case Keyword.get(opts, :connection) || connection_name() do
+            nil -> q
+            name -> Laravex.Database.Query.connection(q, name)
+          end
+
         if Keyword.get(opts, :without_global_scopes, false) do
           q
         else
           Laravex.Database.Model.apply_global_scopes(__MODULE__, q)
         end
+      end
+
+      def connection_name, do: nil
+
+      def connection(name) when is_binary(name) or is_atom(name) do
+        query(connection: name)
       end
 
       def scope(q, name, args \\ []) when is_atom(name) do

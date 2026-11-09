@@ -17,7 +17,7 @@ end
 defmodule Laravex.Cache.Resolver do
   @moduledoc false
 
-  @supported ~w(array file database redis)
+  @supported ~w(array file database redis memcached)
 
   def module(driver) when is_binary(driver) do
     unless driver in @supported do
@@ -31,6 +31,7 @@ defmodule Laravex.Cache.Resolver do
       "file" -> Laravex.Cache.Stores.File
       "database" -> Laravex.Cache.Stores.Database
       "redis" -> Laravex.Cache.Stores.Redis
+      "memcached" -> Laravex.Cache.Stores.Memcached
     end
   end
 

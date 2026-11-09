@@ -17,7 +17,41 @@ defmodule Laravex.Filesystem.Disks.S3 do
   @impl true
   def ensure_supported!(_name, _cfg), do: :ok
 
-  def put(disk, path, contents, _opts \\ []) do
+  @multipart_threshold 5 * 1024 * 1024
+  @part_size 5 * 1024 * 1024
+
+  def put(disk, path, contents, opts \\ []) do
+    contents = IO.iodata_to_binary(contents)
+
+    if byte_size(contents) >= @multipart_threshold or Keyword.get(opts, :multipart, false) do
+      put_multipart(disk, path, contents)
+    else
+      put_single(disk, path, contents)
+    end
+  end
+
+  def get(disk, path) do
+    url = object_url(disk.cfg, path)
+
+    case request(:get, url, disk.cfg, [], "") do
+      {:ok, {{_, 200, _}, _, body}} -> IO.iodata_to_binary(body)
+      {:ok, {{_, status, _}, _, body}} -> raise "S3 get failed (#{status}): #{body_text(body)}"
+      {:error, reason} -> raise "S3 get error: #{inspect(reason)}"
+    end
+  end
+
+  @doc "Stream object body in chunks (returns iodata list of binaries)."
+  def stream_get(disk, path, chunk_size \\ 1_048_576) when chunk_size > 0 do
+    size = content_length(disk, path) || raise "S3 stream_get: unknown object size"
+    ranges = 0..max(size - 1, 0)//chunk_size
+
+    Enum.map(ranges, fn start ->
+      stop = min(start + chunk_size - 1, size - 1)
+      get_range(disk, path, start, stop)
+    end)
+  end
+
+  defp put_single(disk, path, contents) do
     url = object_url(disk.cfg, path)
 
     headers = [
@@ -32,14 +66,113 @@ defmodule Laravex.Filesystem.Disks.S3 do
     end
   end
 
-  def get(disk, path) do
+  defp put_multipart(disk, path, contents) do
+    upload_id = initiate_multipart(disk, path)
+    parts = chunk_binary(contents, @part_size)
+
+    etags =
+      parts
+      |> Enum.with_index(1)
+      |> Enum.map(fn {part, n} ->
+        etag = upload_part(disk, path, upload_id, n, part)
+        {n, etag}
+      end)
+
+    complete_multipart(disk, path, upload_id, etags)
+  end
+
+  defp initiate_multipart(disk, path) do
+    url = object_url(disk.cfg, path) <> "?uploads"
+    case request(:post, url, disk.cfg, [], "") do
+      {:ok, {{_, status, _}, _, body}} when status in 200..299 ->
+        xml = body_text(body)
+
+        case Regex.run(~r/<UploadId>([^<]+)<\/UploadId>/, xml) do
+          [_, id] -> id
+          _ -> raise "S3 multipart initiate: missing UploadId"
+        end
+
+      {:ok, {{_, status, _}, _, body}} ->
+        raise "S3 multipart initiate failed (#{status}): #{body_text(body)}"
+
+      {:error, reason} ->
+        raise "S3 multipart initiate error: #{inspect(reason)}"
+    end
+  end
+
+  defp upload_part(disk, path, upload_id, part_number, body) do
+    url = object_url(disk.cfg, path) <> "?partNumber=#{part_number}&uploadId=#{URI.encode_www_form(upload_id)}"
+    headers = [{~c"content-length", Integer.to_charlist(byte_size(body))}]
+
+    case request(:put, url, disk.cfg, headers, body) do
+      {:ok, {{_, status, _}, resp_headers, _}} when status in 200..299 ->
+        etag_from_headers(resp_headers) || "\"part-#{part_number}\""
+
+      {:ok, {{_, status, _}, _, body}} ->
+        raise "S3 upload part failed (#{status}): #{body_text(body)}"
+
+      {:error, reason} ->
+        raise "S3 upload part error: #{inspect(reason)}"
+    end
+  end
+
+  defp complete_multipart(disk, path, upload_id, etags) do
+    url = object_url(disk.cfg, path) <> "?uploadId=#{URI.encode_www_form(upload_id)}"
+
+    parts_xml =
+      Enum.map_join(etags, "", fn {n, etag} ->
+        "<Part><PartNumber>#{n}</PartNumber><ETag>#{etag}</ETag></Part>"
+      end)
+
+    body = "<CompleteMultipartUpload>#{parts_xml}</CompleteMultipartUpload>"
+    headers = [{~c"content-type", ~c"application/xml"}]
+
+    case request(:post, url, disk.cfg, headers, body) do
+      {:ok, {{_, status, _}, _, _}} when status in 200..299 -> :ok
+      {:ok, {{_, status, _}, _, resp}} -> raise "S3 complete multipart failed (#{status}): #{body_text(resp)}"
+      {:error, reason} -> raise "S3 complete multipart error: #{inspect(reason)}"
+    end
+  end
+
+  defp content_length(disk, path) do
     url = object_url(disk.cfg, path)
 
-    case request(:get, url, disk.cfg, [], "") do
-      {:ok, {{_, 200, _}, _, body}} -> IO.iodata_to_binary(body)
-      {:ok, {{_, status, _}, _, body}} -> raise "S3 get failed (#{status}): #{body_text(body)}"
-      {:error, reason} -> raise "S3 get error: #{inspect(reason)}"
+    case request(:head, url, disk.cfg, [], "") do
+      {:ok, {{_, 200, _}, headers, _}} ->
+        headers
+        |> Enum.find_value(fn
+          {k, v} -> if String.downcase(to_string(k)) == "content-length", do: String.to_integer(to_string(v))
+          _ -> nil
+        end)
+
+      _ ->
+        nil
     end
+  end
+
+  defp get_range(disk, path, start, stop) do
+    url = object_url(disk.cfg, path)
+    headers = [{~c"range", String.to_charlist("bytes=#{start}-#{stop}")}]
+
+    case request(:get, url, disk.cfg, headers, "") do
+      {:ok, {{_, status, _}, _, body}} when status in [200, 206] -> IO.iodata_to_binary(body)
+      {:ok, {{_, status, _}, _, body}} -> raise "S3 range get failed (#{status}): #{body_text(body)}"
+      {:error, reason} -> raise "S3 range get error: #{inspect(reason)}"
+    end
+  end
+
+  defp chunk_binary(bin, size) when byte_size(bin) <= size, do: [bin]
+
+  defp chunk_binary(bin, size) do
+    <<chunk::binary-size(^size), rest::binary>> = bin
+    [chunk | chunk_binary(rest, size)]
+  end
+
+  defp etag_from_headers(headers) do
+    Enum.find_value(headers, fn
+      {k, v} -> if String.downcase(to_string(k)) == "etag", do: to_string(v)
+      _ -> nil
+    end)
   end
 
   def exists?(disk, path) do

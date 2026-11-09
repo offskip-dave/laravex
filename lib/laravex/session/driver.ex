@@ -12,7 +12,7 @@ end
 defmodule Laravex.Session.Resolver do
   @moduledoc false
 
-  @supported ~w(file database redis)
+  @supported ~w(file database redis cookie)
 
   def module do
     driver = to_string(Laravex.Config.Repository.get("session.driver", "file"))
@@ -27,6 +27,7 @@ defmodule Laravex.Session.Resolver do
       "file" -> Laravex.Session.Drivers.File
       "database" -> Laravex.Session.Drivers.Database
       "redis" -> Laravex.Session.Drivers.Redis
+      "cookie" -> Laravex.Session.Drivers.Cookie
     end
   end
 end

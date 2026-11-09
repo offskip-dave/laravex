@@ -67,4 +67,6 @@ Password resets use `Laravex.Auth.Password` + `password_reset_tokens` (wired by 
 
 ## Drivers (adapter layer)
 
-Facades resolve via behaviours + config (zero Hex): SQLite CLI (default), `psql`/`mysql` adapters, RESP Redis (cache/session/queue), SMTP `:gen_tcp`, S3 `:httpc`+SigV4, broadcast `log`/`null`/`array`/`pubsub`. See `docs/DEPLOY.md`.
+**Default (zero-Hex):** SQLite/`psql`/`mysql` CLIs, RESP Redis `:gen_tcp`, SMTP `:gen_tcp`, S3 `:httpc`+SigV4, broadcast `log`/`null`/`array`/`pubsub`.
+
+**Optional native Hex** (selected per driver): Exqlite/Postgrex/MyXQL/TDS pools (`DB_CLIENT=native`), Redix (`REDIS_CLIENT=native`, TLS), Memcachex, Req for SES/Postmark/Resend/SQS. Multi-DB via `Connection.using_connection/2`. Cookie sessions, Pennant, LazyCollection, Macroable, Concurrency, Process, Prompts. Artisan: `schedule:work`, `queue:listen`, `db:table`, `vendor:publish`, `make:component|channel|cast|exception|scope`. See `docs/DEPLOY.md`.

@@ -1,21 +1,35 @@
 defmodule Laravex.Support.RedisClient do
-  @moduledoc "Minimal Redis client over RESP (:gen_tcp, no Hex deps)."
+  @moduledoc """
+  Redis client facade.
+
+  Default: RESP over `:gen_tcp` (zero-Hex).
+  Native: Redix pool when `REDIS_CLIENT=native` (TLS via `REDIS_TLS=true`).
+  """
 
   @default_timeout 5_000
 
+  def native? do
+    client =
+      to_string(
+        Laravex.Config.Repository.get("database.redis.client") ||
+          System.get_env("REDIS_CLIENT") ||
+          "phpredis"
+      )
+
+    client in ["native", "redix", "hex"]
+  end
+
   def ping(opts \\ []) do
-    with {:ok, socket} <- connect(opts),
-         {:ok, resp} <- command(socket, ["PING"]),
-         :ok <- close(socket) do
-      resp
+    case command(["PING"], opts) do
+      {:ok, resp} -> resp
+      other -> other
     end
   end
 
   def get(key, opts \\ []) do
-    with {:ok, socket} <- connect(opts),
-         {:ok, resp} <- command(socket, ["GET", key]),
-         :ok <- close(socket) do
-      resp
+    case command(["GET", key], opts) do
+      {:ok, resp} -> resp
+      other -> other
     end
   end
 
@@ -26,46 +40,47 @@ defmodule Laravex.Support.RedisClient do
         seconds -> ["SETEX", key, to_string(seconds), value]
       end
 
-    with {:ok, socket} <- connect(Keyword.delete(opts, :ex)),
-         {:ok, _} <- command(socket, args),
-         :ok <- close(socket) do
-      :ok
+    case command(args, Keyword.delete(opts, :ex)) do
+      {:ok, _} -> :ok
+      other -> other
     end
   end
 
   def del(key, opts \\ []) do
-    with {:ok, socket} <- connect(opts),
-         {:ok, _} <- command(socket, ["DEL", key]),
-         :ok <- close(socket) do
-      :ok
+    case command(["DEL", key], opts) do
+      {:ok, _} -> :ok
+      other -> other
     end
   end
 
   def exists?(key, opts \\ []) do
-    with {:ok, socket} <- connect(opts),
-         {:ok, n} <- command(socket, ["EXISTS", key]),
-         :ok <- close(socket) do
-      n == 1
+    case command(["EXISTS", key], opts) do
+      {:ok, n} -> n == 1
+      _ -> false
     end
   end
 
   def lpush(key, value, opts \\ []) do
-    with {:ok, socket} <- connect(opts),
-         {:ok, _} <- command(socket, ["LPUSH", key, value]),
-         :ok <- close(socket) do
-      :ok
+    case command(["LPUSH", key, value], opts) do
+      {:ok, _} -> :ok
+      other -> other
     end
   end
 
   def brpop(key, timeout \\ 1, opts \\ []) do
-    with {:ok, socket} <- connect(opts),
-         {:ok, resp} <- command(socket, ["BRPOP", key, to_string(timeout)]),
-         :ok <- close(socket) do
-      case resp do
-        [_queue, value] -> {:ok, value}
-        nil -> :error
-        _ -> :error
-      end
+    case command(["BRPOP", key, to_string(timeout)], opts) do
+      {:ok, [_queue, value]} -> {:ok, value}
+      {:ok, nil} -> :error
+      {:ok, _} -> :error
+      _ -> :error
+    end
+  end
+
+  def command(args, opts \\ []) when is_list(args) do
+    if native?() do
+      Laravex.Support.RedisPool.command(args, opts)
+    else
+      tcp_command(args, opts)
     end
   end
 
@@ -80,8 +95,19 @@ defmodule Laravex.Support.RedisClient do
       port: to_int(Map.get(cfg, "port", 6379)),
       password: Map.get(cfg, "password") || Map.get(cfg, :password),
       database: to_int(Map.get(cfg, "database", 0)),
+      scheme: Map.get(cfg, "scheme") || System.get_env("REDIS_SCHEME"),
       timeout: @default_timeout
     }
+  end
+
+  # --- TCP (default) ---
+
+  defp tcp_command(args, opts) do
+    with {:ok, socket} <- connect(opts),
+         {:ok, resp} <- tcp_send(socket, args),
+         :ok <- close(socket) do
+      {:ok, resp}
+    end
   end
 
   def connect(opts) do
@@ -97,7 +123,7 @@ defmodule Laravex.Support.RedisClient do
     end
   end
 
-  def command(socket, args) when is_list(args) do
+  defp tcp_send(socket, args) when is_list(args) do
     :ok = :gen_tcp.send(socket, encode_command(args))
     read_response(socket)
   end
@@ -106,7 +132,7 @@ defmodule Laravex.Support.RedisClient do
   defp maybe_auth(_socket, ""), do: :ok
 
   defp maybe_auth(socket, password) do
-    case command(socket, ["AUTH", to_string(password)]) do
+    case tcp_send(socket, ["AUTH", to_string(password)]) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -115,7 +141,7 @@ defmodule Laravex.Support.RedisClient do
   defp maybe_select_db(_socket, db) when db in [0, "0", nil], do: :ok
 
   defp maybe_select_db(socket, db) do
-    case command(socket, ["SELECT", to_string(db)]) do
+    case tcp_send(socket, ["SELECT", to_string(db)]) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -124,13 +150,10 @@ defmodule Laravex.Support.RedisClient do
   defp encode_command(args) do
     parts = Enum.map(args, &to_string/1)
 
-    header =
-      "*#{length(parts)}\r\n" <>
-        Enum.map_join(parts, "", fn arg ->
-          "$#{byte_size(arg)}\r\n#{arg}\r\n"
-        end)
-
-    header
+    "*#{length(parts)}\r\n" <>
+      Enum.map_join(parts, "", fn arg ->
+        "$#{byte_size(arg)}\r\n#{arg}\r\n"
+      end)
   end
 
   defp read_response(socket) do
@@ -175,17 +198,12 @@ defmodule Laravex.Support.RedisClient do
     end
   end
 
-  defp recv_line(socket) do
-    recv_line(socket, [])
-  end
+  defp recv_line(socket), do: recv_line(socket, [])
 
   defp recv_line(socket, acc) do
     case :gen_tcp.recv(socket, 1, @default_timeout) do
       {:ok, "\n"} ->
-        acc
-        |> Enum.reverse()
-        |> IO.iodata_to_binary()
-        |> then(&{:ok, &1})
+        {:ok, acc |> Enum.reverse() |> IO.iodata_to_binary()}
 
       {:ok, char} ->
         recv_line(socket, [char | acc])
@@ -195,9 +213,7 @@ defmodule Laravex.Support.RedisClient do
     end
   end
 
-  defp recv_exact(socket, n) do
-    do_recv_exact(socket, n, "")
-  end
+  defp recv_exact(socket, n), do: do_recv_exact(socket, n, "")
 
   defp do_recv_exact(_socket, n, acc) when byte_size(acc) >= n do
     <<got::binary-size(^n), _rest::binary>> = acc

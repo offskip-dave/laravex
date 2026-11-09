@@ -73,11 +73,16 @@ defmodule Laravex.Foundation.Application do
       Routes.Console.register()
     end
 
-    Enum.each(Bootstrap.Providers.list(), fn provider_mod ->
+    providers = Bootstrap.Providers.list()
+
+    Enum.each(providers, fn provider_mod ->
       if function_exported?(provider_mod, :register, 0), do: provider_mod.register()
     end)
 
-    Enum.each(Bootstrap.Providers.list(), fn provider_mod ->
+    {deferred, eager} = Enum.split_with(providers, &deferred_provider?/1)
+    :persistent_term.put({__MODULE__, :deferred_providers}, deferred)
+
+    Enum.each(eager, fn provider_mod ->
       if function_exported?(provider_mod, :boot, 0), do: provider_mod.boot()
     end)
 
@@ -105,6 +110,7 @@ defmodule Laravex.Foundation.Application do
 
   def handle_request(%Laravex.Http.Request{} = request) do
     app = instance() || create(Bootstrap.App.build())
+    _ = boot_deferred_providers()
 
     try do
       Laravex.Http.Kernel.handle(request, app)
@@ -142,6 +148,32 @@ defmodule Laravex.Foundation.Application do
     if Code.ensure_loaded?(mod) and function_exported?(mod, :register, 0) do
       apply(mod, :register, [])
     end
+  end
+
+  @doc "Boot deferred providers (Laravel deferred service providers)."
+  def boot_deferred_providers do
+    case :persistent_term.get({__MODULE__, :deferred_providers}, []) do
+      [] ->
+        :ok
+
+      list ->
+        Enum.each(list, fn provider_mod ->
+          if function_exported?(provider_mod, :boot, 0), do: provider_mod.boot()
+        end)
+
+        :persistent_term.put({__MODULE__, :deferred_providers}, [])
+        :ok
+    end
+  end
+
+  defp deferred_provider?(mod) do
+    cond do
+      function_exported?(mod, :defer, 0) -> mod.defer() in [true, :true]
+      function_exported?(mod, :deferred?, 0) -> mod.deferred?()
+      true -> false
+    end
+  rescue
+    _ -> false
   end
 
   defp warn_missing_app_key do

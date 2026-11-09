@@ -8,6 +8,8 @@ defmodule Laravex.Application do
 
     children = [
       Laravex.Container,
+      Laravex.Database.Pool,
+      Laravex.Support.RedisPool,
       Laravex.Cache.Manager,
       Laravex.Queue.Worker,
       Laravex.Events.Dispatcher,

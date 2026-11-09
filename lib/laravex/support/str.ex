@@ -1,5 +1,6 @@
 defmodule Laravex.Support.Str do
   @moduledoc "Laravel Str helper subset."
+  use Laravex.Support.Macroable
 
   import Kernel, except: [length: 1]
 

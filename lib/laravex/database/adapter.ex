@@ -1,8 +1,9 @@
 defmodule Laravex.Database.Adapter do
   @moduledoc """
-  Database connection adapter (Phase C1).
+  Database connection adapter.
 
-  Implemented drivers: SQLite, PostgreSQL (`psql`), MySQL/MariaDB (`mysql`) CLIs.
+  Default: CLI adapters (sqlite3 / psql / mysql).
+  Optional native: Exqlite / Postgrex / MyXQL / TDS when `client: \"native\"`.
   """
 
   @callback path() :: String.t()

@@ -1,5 +1,7 @@
 defmodule Laravex.Support.Collection do
   @moduledoc "Laravel Collection subset."
+  use Laravex.Support.Macroable
+
   defstruct items: []
 
   def new(enumerable), do: %__MODULE__{items: Enum.to_list(enumerable)}

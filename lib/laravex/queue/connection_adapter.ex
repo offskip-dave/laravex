@@ -9,7 +9,7 @@ end
 defmodule Laravex.Queue.Resolver do
   @moduledoc false
 
-  @supported ~w(sync database deferred redis)
+  @supported ~w(sync database deferred redis sqs)
 
   def module(connection) when is_binary(connection) do
     unless connection in @supported do
@@ -23,6 +23,8 @@ defmodule Laravex.Queue.Resolver do
       "database" -> Laravex.Queue.Connections.Database
       "deferred" -> Laravex.Queue.Connections.Deferred
       "redis" -> Laravex.Queue.Connections.Redis
+      "sqs" -> Laravex.Queue.Connections.Sqs
     end
   end
 end
+
