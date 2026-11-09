@@ -14,7 +14,8 @@ defmodule Laravex.Database.Resolver do
     name = normalize_name(name || Laravex.Database.Connection.current_name())
     ensure_supported!(name)
 
-    if native?(name) do
+    # sqlsrv has no CLI adapter — always use TDS.
+    if name == "sqlsrv" or native?(name) do
       native_module(name)
     else
       cli_module(name)
@@ -23,9 +24,14 @@ defmodule Laravex.Database.Resolver do
 
   def native?(name) do
     name = normalize_name(name)
-    cfg = Laravex.Database.Connection.config(name)
-    client = to_string(Map.get(cfg, "client") || Laravex.Env.get("DB_CLIENT", "cli"))
-    client in ["native", "hex"]
+    # SQL Server is native-only (TDS); ignore DB_CLIENT=cli.
+    if name == "sqlsrv" do
+      true
+    else
+      cfg = Laravex.Database.Connection.config(name)
+      client = to_string(Map.get(cfg, "client") || Laravex.Env.get("DB_CLIENT", "cli"))
+      client in ["native", "hex"]
+    end
   end
 
   def normalize_name(nil), do: normalize_name(Laravex.Config.Repository.get("database.default", "sqlite"))
@@ -48,11 +54,6 @@ defmodule Laravex.Database.Resolver do
   defp cli_module("sqlite"), do: Laravex.Database.Adapters.Sqlite
   defp cli_module(name) when name in ["pgsql", "postgres"], do: Laravex.Database.Adapters.Postgres
   defp cli_module(name) when name in ["mysql", "mariadb"], do: Laravex.Database.Adapters.Mysql
-
-  defp cli_module("sqlsrv") do
-    raise ArgumentError,
-          "SQL Server requires the native client (set client: \"native\" or DB_CLIENT=native)."
-  end
 
   defp native_module("sqlite"), do: Laravex.Database.Adapters.Native.Sqlite
   defp native_module(name) when name in ["pgsql", "postgres"], do: Laravex.Database.Adapters.Native.Postgres

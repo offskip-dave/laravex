@@ -5,6 +5,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/offskip-dave/laravex/actions/workflows/ci.yml"><img src="https://github.com/offskip-dave/laravex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/offskip-dave/laravex/wiki"><img src="https://img.shields.io/badge/docs-wiki-blue" alt="Documentation"></a>
   <a href="https://elixir-lang.org"><img src="https://img.shields.io/badge/elixir-~%3E%201.17-4B275F" alt="Elixir"></a>
   <a href="https://github.com/offskip-dave/laravex/wiki/Limitations"><img src="https://img.shields.io/badge/status-early-orange" alt="Status"></a>

@@ -73,7 +73,8 @@ base = File.cwd!()
     },
     "sqlsrv" => %{
       "driver" => "sqlsrv",
-      "client" => env.("DB_CLIENT", "native"),
+      # TDS only — there is no CLI sqlsrv adapter; ignore DB_CLIENT=cli.
+      "client" => "native",
       "url" => env.("DB_URL", nil),
       "host" => env.("DB_HOST", "localhost"),
       "port" => env.("DB_PORT", "1433"),
