@@ -7,6 +7,7 @@ defmodule Laravex.Console.Kernel do
     "inspire" => {&__MODULE__.cmd_inspire/1, "Display an inspiring quote"},
     "list" => {&__MODULE__.cmd_list/1, "List commands"},
     "serve" => {&__MODULE__.cmd_serve/1, "Serve the application"},
+    "dev" => {&__MODULE__.cmd_dev/1, "Run the default development processes"},
     "migrate" => {&__MODULE__.cmd_migrate/1, "Run migrations"},
     "migrate:rollback" => {&__MODULE__.cmd_rollback/1, "Rollback migrations"},
     "migrate:refresh" => {&__MODULE__.cmd_refresh/1, "Refresh migrations"},
@@ -163,6 +164,90 @@ defmodule Laravex.Console.Kernel do
     {:ok, _pid, actual} = Laravex.Http.Server.start_link(port: port)
     Output.info("Server running on <fg=cyan>http://127.0.0.1:#{actual}</>.")
     Process.sleep(:infinity)
+  end
+
+  @doc """
+  Port of `php artisan dev` — runs serve + queue:listen (and npm run dev when present).
+  """
+  def cmd_dev(_args) do
+    processes = default_dev_processes()
+
+    Output.info("Starting development processes:")
+
+    Enum.each(processes, fn %{name: name, command: command} ->
+      Output.line("  <fg=cyan>[#{name}]</> #{command}")
+    end)
+
+    Output.line("")
+
+    ports =
+      Enum.map(processes, fn %{name: name, command: command} ->
+        port =
+          Port.open({:spawn_executable, find_executable!("sh")}, [
+            :binary,
+            :exit_status,
+            :stderr_to_stdout,
+            args: ["-c", command]
+          ])
+
+        {name, port}
+      end)
+
+    pump_dev_ports(ports)
+  end
+
+  defp default_dev_processes do
+    artisan = Path.join(Laravex.Foundation.Application.base_path(), "artisan")
+    elixir = System.find_executable("elixir") || "elixir"
+
+    base = [
+      %{name: "server", command: "#{elixir} #{artisan} serve"},
+      %{name: "queue", command: "#{elixir} #{artisan} queue:listen"}
+    ]
+
+    package_json = Path.join(Laravex.Foundation.Application.base_path(), "package.json")
+
+    if File.exists?(package_json) do
+      npm = System.find_executable("npm") || "npm"
+      base ++ [%{name: "vite", command: "#{npm} run dev"}]
+    else
+      base
+    end
+  end
+
+  defp find_executable!(name) do
+    System.find_executable(name) || raise "executable #{name} not found"
+  end
+
+  defp pump_dev_ports(ports) do
+    receive do
+      {port, {:data, data}} when is_port(port) ->
+        name =
+          case Enum.find(ports, fn {_n, p} -> p == port end) do
+            {n, _} -> n
+            _ -> "dev"
+          end
+
+        data
+        |> String.split("\n", trim: false)
+        |> Enum.each(fn
+          "" -> :ok
+          line -> Output.line("<fg=cyan>[#{name}]</> #{line}")
+        end)
+
+        pump_dev_ports(ports)
+
+      {port, {:exit_status, status}} when is_port(port) ->
+        name =
+          case Enum.find(ports, fn {_n, p} -> p == port end) do
+            {n, _} -> n
+            _ -> "dev"
+          end
+
+        Output.error("[#{name}] exited with status #{status}")
+        Enum.each(ports, fn {_n, p} -> if p != port and Port.info(p), do: Port.close(p) end)
+        System.halt(status)
+    end
   end
 
   def cmd_migrate(_), do: (Laravex.Database.Migrator.migrate(); :ok)

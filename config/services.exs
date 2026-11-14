@@ -1,3 +1,4 @@
+# Third party services credentials (Resend, Postmark, AWS, and more).
 env = &Laravex.Env.get/2
 
 %{

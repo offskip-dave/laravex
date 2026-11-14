@@ -17,6 +17,7 @@ env = &Laravex.Env.get/2
     |> to_string()
     |> String.split(",", trim: true)
     |> Enum.reject(&(&1 == "")),
+  # Supported drivers: "file", "cache", "array"
   "maintenance" => %{
     "driver" => env.("APP_MAINTENANCE_DRIVER", "file"),
     "store" => env.("APP_MAINTENANCE_STORE", "database")

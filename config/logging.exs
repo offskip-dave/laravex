@@ -2,6 +2,9 @@ env = &Laravex.Env.get/2
 base = File.cwd!()
 log_path = Path.join(base, "storage/logs/laravex.log")
 
+# Available drivers: "single", "daily", "monthly", "slack", "syslog",
+#                    "errorlog", "stderr", "null", "stack"
+
 %{
   "default" => env.("LOG_CHANNEL", "stack"),
   "deprecations" => %{

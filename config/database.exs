@@ -1,6 +1,12 @@
 env = &Laravex.Env.get/2
 base = File.cwd!()
 
+# Keep false PDO-style option values; drop only nil (Laravel #6879).
+pdo_options =
+  %{"ssl_ca" => env.("MYSQL_ATTR_SSL_CA", nil)}
+  |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+  |> Map.new()
+
 %{
   "default" => env.("DB_CONNECTION", "sqlite"),
   "connections" => %{
@@ -34,7 +40,7 @@ base = File.cwd!()
       "prefix_indexes" => true,
       "strict" => true,
       "engine" => nil,
-      "options" => %{}
+      "options" => pdo_options
     },
     "mariadb" => %{
       "driver" => "mariadb",
@@ -53,7 +59,7 @@ base = File.cwd!()
       "prefix_indexes" => true,
       "strict" => true,
       "engine" => nil,
-      "options" => %{}
+      "options" => pdo_options
     },
     "pgsql" => %{
       "driver" => "pgsql",

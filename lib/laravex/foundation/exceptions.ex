@@ -116,7 +116,7 @@ defmodule Laravex.Foundation.Exceptions do
   end
 
   defp should_json?(_, request) do
-    Laravex.Http.Request.wants_json?(request) or Laravex.Http.Request.ajax?(request)
+    Laravex.Http.Request.expects_json?(request)
   end
 
   defp debug_page(status, message, error) do

@@ -19,7 +19,7 @@ defmodule Bootstrap.App do
     end)
     |> Application.with_exceptions(fn exceptions ->
       Exceptions.should_render_json_when(exceptions, fn request ->
-        Request.is?(request, "api/*") or Request.wants_json?(request) or Request.ajax?(request)
+        Request.is?(request, "api/*") or Request.expects_json?(request)
       end)
     end)
   end
