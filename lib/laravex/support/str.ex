@@ -80,6 +80,12 @@ defmodule Laravex.Support.Str do
     if String.starts_with?(s, prefix), do: s, else: prefix <> s
   end
 
+  @doc "Whether the value is blank (Laravel `Str::isBlank` / Stringable `isBlank`)."
+  def is_blank?(value), do: Laravex.Support.Helpers.blank?(value)
+
+  @doc "Whether the value is not blank (Laravel `Str::isNotBlank` / Stringable `isNotBlank`)."
+  def is_not_blank?(value), do: Laravex.Support.Helpers.filled?(value)
+
   def before(s, search) do
     case String.split(to_string(s), search, parts: 2) do
       [left, _] -> left
@@ -212,6 +218,20 @@ defmodule Laravex.Support.Str do
   end
 
   def is_ulid?(_), do: false
+
+  @doc """
+  Whether the string is a plausible email (RFC 5321 length + no CR/LF).
+
+  Laravel #62347: addresses longer than 254 octets are invalid.
+  """
+  def is_email?(s) when is_binary(s) do
+    byte_size(s) <= 254 and
+      not String.contains?(s, ["\r", "\n", "\0"]) and
+      match?([_, _], String.split(s, "@")) and
+      Regex.match?(~r/\A[^\s@]+@[^\s@]+\.[^\s@]+\z/u, s)
+  end
+
+  def is_email?(_), do: false
 
   def is_url?(s) when is_binary(s) do
     case URI.parse(s) do

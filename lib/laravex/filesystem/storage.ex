@@ -119,6 +119,45 @@ defmodule Laravex.Filesystem.Storage do
     end
   end
 
+  @doc """
+  Copy a file to another disk (Laravel `copyToDisk`).
+
+  `options` may be a visibility string (`\"public\"` / `\"private\"`) or a keyword/
+  map of put options (e.g. `visibility: \"public\"`).
+  """
+  def copy_to_disk(dest_disk, from, to \\ nil, options \\ []) do
+    source = disk()
+    destination = disk(dest_disk)
+    target = to || from
+    opts = normalize_put_options(options)
+    contents = get(from, source.name)
+    put(target, contents, destination.name, opts)
+    true
+  end
+
+  @doc "Move a file to another disk (Laravel `moveToDisk`). Accepts the same options as `copy_to_disk/4`."
+  def move_to_disk(dest_disk, from, to \\ nil, options \\ []) do
+    if copy_to_disk(dest_disk, from, to, options) do
+      delete(from)
+      true
+    else
+      false
+    end
+  end
+
+  defp normalize_put_options(options) when is_binary(options), do: [visibility: options]
+  defp normalize_put_options(options) when is_atom(options), do: [visibility: to_string(options)]
+  defp normalize_put_options(options) when is_list(options), do: options
+
+  defp normalize_put_options(options) when is_map(options) do
+    Enum.map(options, fn {k, v} -> {String.to_existing_atom(to_string(k)), v} end)
+  rescue
+    ArgumentError ->
+      Enum.map(options, fn {k, v} -> {String.to_atom(to_string(k)), v} end)
+  end
+
+  defp normalize_put_options(_), do: []
+
   def files(directory, disk \\ nil) do
     d = disk(disk)
     dir = Path.join(d.root, directory)

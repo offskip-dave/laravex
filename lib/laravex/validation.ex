@@ -56,7 +56,8 @@ defmodule Laravex.Validation do
   Options: `:messages` and `:attributes` maps (FormRequest `messages/0`, `attributes/0`).
   """
   def validate_request(request, rules, opts \\ []) do
-    data = Map.merge(request.params, request.files || %{})
+    # Merge files so blank input values are replaced by uploads (Laravel #62521).
+    data = merge_files_with_input(request.params || %{}, request.files || %{})
 
     case validate(data, rules, opts) do
       {:ok, validated} ->
@@ -72,6 +73,30 @@ defmodule Laravex.Validation do
           raise Failed, errors: errors, request: request
         end
     end
+  end
+
+  @doc false
+  def merge_files_with_input(input, files) when is_map(input) and is_map(files) do
+    Enum.reduce(files, input, fn {key, value}, acc ->
+      key = to_string(key)
+
+      case Map.fetch(acc, key) do
+        :error ->
+          Map.put(acc, key, value)
+
+        {:ok, input_value} ->
+          cond do
+            Laravex.Support.Helpers.blank?(input_value) ->
+              Map.put(acc, key, value)
+
+            is_map(input_value) and is_map(value) ->
+              Map.put(acc, key, merge_files_with_input(input_value, value))
+
+            true ->
+              acc
+          end
+      end
+    end)
   end
 
   def only_rule_keys(data, rules) when is_map(data) and is_map(rules) do
@@ -285,6 +310,20 @@ defmodule Laravex.Validation do
 
   defp check_rule(field, value, rule, data) do
     case rule do
+      %{__struct__: Laravex.Validation.Rule.Database} = db_rule ->
+        Laravex.Validation.Rule.Database.validate(field, value, db_rule)
+
+      %{__struct__: mod} = struct_rule when is_atom(mod) ->
+        cond do
+          function_exported?(mod, :passes?, 2) ->
+            if mod.passes?(struct_rule, value),
+              do: [],
+              else: [Map.get(struct_rule, :message) || "The #{field} is invalid."]
+
+          true ->
+            run_rule_module(field, value, data, mod)
+        end
+
       mod when is_atom(mod) and mod not in [nil, true, false] ->
         run_rule_module(field, value, data, mod)
 
@@ -337,7 +376,7 @@ defmodule Laravex.Validation do
           else: ["The #{field} field must be a string."]
 
       "email" ->
-        if is_nil(value) or (is_binary(value) and String.contains?(value, "@")),
+        if is_nil(value) or (is_binary(value) and Laravex.Support.Str.is_email?(value)),
           do: [],
           else: ["The #{field} field must be a valid email."]
 
@@ -487,6 +526,9 @@ defmodule Laravex.Validation do
         if is_nil(value) or (is_binary(value) and Regex.match?(re, value)),
           do: [],
           else: ["The #{field} format is invalid."]
+
+      "not_regex:" <> pattern ->
+        not_regex_rule(field, value, pattern)
 
       "unique:" <> rest ->
         unique_error(field, value, rest)
@@ -890,6 +932,11 @@ defmodule Laravex.Validation do
 
   defp rule_name(rule) when is_binary(rule), do: rule |> String.split(":", parts: 2) |> hd()
   defp rule_name(rule) when is_atom(rule), do: to_string(rule)
+
+  defp rule_name(%{__struct__: Laravex.Validation.Rule.Database, type: type}),
+    do: to_string(type)
+
+  defp rule_name(%{__struct__: mod}), do: to_string(mod)
   defp rule_name(_), do: ""
 
   defp field_present?(data, field) do
@@ -1463,6 +1510,27 @@ defmodule Laravex.Validation do
 
   defp scan_jpeg_sof(_), do: :error
 
+  # Fail when the value matches OR when the regex cannot be applied
+  # (Laravel #62427 — preg_match false must not pass not_regex).
+  defp not_regex_rule(_field, nil, _), do: []
+  defp not_regex_rule(_field, "", _), do: []
+
+  defp not_regex_rule(field, value, pattern) do
+    value = to_string(value)
+
+    case Regex.compile(pattern) do
+      {:ok, re} ->
+        if Regex.match?(re, value),
+          do: ["The #{field} format is invalid."],
+          else: []
+
+      {:error, _} ->
+        ["The #{field} format is invalid."]
+    end
+  rescue
+    _ -> ["The #{field} format is invalid."]
+  end
+
   defp mime_ext_rule(_field, nil, _), do: []
   defp mime_ext_rule(_field, "", _), do: []
 
@@ -1717,26 +1785,6 @@ defmodule Laravex.Validation do
   defp parse_comparable_date(_), do: nil
 end
 
-defmodule Laravex.Validation.Rule do
-  @moduledoc """
-  Custom validation rule behaviour (Laravel `ValidationRule` / `Rule` objects).
-
-      defmodule App.Rules.Uppercase do
-        @behaviour Laravex.Validation.Rule
-        def passes?(_attr, value), do: is_binary(value) and value == String.upcase(value)
-        def message, do: "must be uppercase"
-      end
-
-  Use in rules as a module atom or list entry:
-
-      %{"code" => ["required", App.Rules.Uppercase]}
-  """
-
-  @callback passes?(attribute :: String.t(), value :: term()) :: boolean()
-  @callback message() :: String.t()
-  @optional_callbacks message: 0
-end
-
 defmodule Laravex.Http.FormRequest do
   @moduledoc """
   Base form request behaviour.
@@ -1745,6 +1793,8 @@ defmodule Laravex.Http.FormRequest do
 
       def messages, do: %{"email.required" => "We need your :attribute"}
       def attributes, do: %{"email" => "email address"}
+
+  Model helpers (Laravel #62523): `model/2`, `model_or_fail/2`, `models/2`.
   """
 
   @callback rules() :: map()
@@ -1778,6 +1828,26 @@ defmodule Laravex.Http.FormRequest do
         end
       end
 
+      def model(key, model_class \\ nil, callback \\ nil) do
+        Laravex.Http.FormRequest.model(current_request!(), key, model_class, callback)
+      end
+
+      def model_or_fail(key, model_class \\ nil, callback \\ nil) do
+        Laravex.Http.FormRequest.model_or_fail(current_request!(), key, model_class, callback)
+      end
+
+      def models(key, model_class \\ nil, callback \\ nil) do
+        Laravex.Http.FormRequest.models(current_request!(), key, model_class, callback)
+      end
+
+      defp current_request! do
+        case Process.get(:laravex_request) do
+          %{__struct__: Laravex.Http.Request} = req -> req
+          %{} = req -> req
+          _ -> raise "FormRequest model helpers require an active request"
+        end
+      end
+
       defoverridable authorize: 1, messages: 0, attributes: 0
     end
   end
@@ -1793,6 +1863,108 @@ defmodule Laravex.Http.FormRequest do
         else
           raise Laravex.Validation.Failed, errors: errors, request: request
         end
+    end
+  end
+
+  @doc "Retrieve the model identified by the given input (Laravel `model`)."
+  def model(request, key, model_class \\ nil, callback \\ nil)
+
+  def model(request, key, model_class, callback) do
+    {model_class, callback} = normalize_model_args(model_class, callback)
+
+    if not filled_input?(request, key) do
+      nil
+    else
+      id = Laravex.Http.Request.input(request, key)
+      model_class = model_class || guess_model_class(key)
+      query = new_model_query(model_class, callback)
+
+      query
+      |> Laravex.Database.Query.where("id", id)
+      |> Laravex.Database.Query.first()
+      |> case do
+        nil -> nil
+        row -> model_class.from_row(row)
+      end
+    end
+  end
+
+  @doc "Retrieve the model or raise ModelNotFound (Laravel `modelOrFail`)."
+  def model_or_fail(request, key, model_class \\ nil, callback \\ nil)
+
+  def model_or_fail(request, key, model_class, callback) do
+    {model_class, callback} = normalize_model_args(model_class, callback)
+    model_class = model_class || guess_model_class(key)
+    id = if filled_input?(request, key), do: Laravex.Http.Request.input(request, key), else: nil
+
+    query = new_model_query(model_class, callback)
+
+    case query |> Laravex.Database.Query.where("id", id) |> Laravex.Database.Query.first() do
+      nil ->
+        raise Laravex.Database.ModelNotFoundException, model: model_class, id: id
+
+      row ->
+        model_class.from_row(row)
+    end
+  end
+
+  @doc "Retrieve many models for an array input (Laravel `models`)."
+  def models(request, key, model_class \\ nil, callback \\ nil)
+
+  def models(request, key, model_class, callback) do
+    {model_class, callback} = normalize_model_args(model_class, callback)
+    model_class = model_class || guess_model_class(key)
+    ids = List.wrap(Laravex.Http.Request.input(request, key, []))
+    query = new_model_query(model_class, callback)
+
+    if ids == [] do
+      []
+    else
+      query
+      |> Laravex.Database.Query.where_in("id", ids)
+      |> Laravex.Database.Query.get()
+      |> Enum.map(&model_class.from_row/1)
+    end
+  end
+
+  defp normalize_model_args(model_class, _callback) when is_function(model_class, 1),
+    do: {nil, model_class}
+
+  defp normalize_model_args(model_class, callback), do: {model_class, callback}
+
+  defp filled_input?(request, key), do: Laravex.Http.Request.filled?(request, key)
+
+  defp new_model_query(model_class, nil), do: model_class.query()
+
+  defp new_model_query(model_class, callback) when is_function(callback, 1) do
+    callback.(model_class.query())
+  end
+
+  defp guess_model_class(key) do
+    name =
+      key
+      |> to_string()
+      |> String.replace_suffix("_ids", "")
+      |> String.replace_suffix("_id", "")
+      |> singularize()
+      |> Laravex.Support.Str.studly()
+
+    candidates = [Module.concat([App, Models, name]), Module.concat([App, name])]
+
+    Enum.find(candidates, fn mod ->
+      match?({:module, ^mod}, Code.ensure_loaded(mod))
+    end) ||
+      raise ArgumentError,
+            "Unable to guess model class for #{inspect(key)}; pass an explicit module"
+  end
+
+  defp singularize(word) do
+    cond do
+      String.ends_with?(word, "ies") -> String.replace_suffix(word, "ies", "y")
+      String.ends_with?(word, "ses") -> String.replace_suffix(word, "ses", "s")
+      String.ends_with?(word, "s") and not String.ends_with?(word, "ss") ->
+        String.trim_trailing(word, "s")
+      true -> word
     end
   end
 end

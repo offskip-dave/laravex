@@ -7,10 +7,45 @@ defmodule Laravex.Database.Connection do
   """
 
   @conn_key :laravex_db_connection
+  @modified_key :laravex_db_records_modified
 
   def current_name do
     Process.get(@conn_key) ||
       to_string(Laravex.Config.Repository.get("database.default", "sqlite"))
+  end
+
+  @doc "Mark that writes occurred (Laravel sticky read/write)."
+  def records_have_been_modified(flag \\ true) do
+    Process.put(@modified_key, flag == true)
+    :ok
+  end
+
+  def has_modified_records?, do: Process.get(@modified_key, false) == true
+
+  def forget_record_modification_state do
+    Process.delete(@modified_key)
+    :ok
+  end
+
+  @doc """
+  Run `fun` without changing sticky modification state (Laravel `withoutAffectingStickiness`).
+  """
+  def without_affecting_stickiness(fun) when is_function(fun, 0) do
+    prev = Process.get(@modified_key)
+
+    try do
+      fun.()
+    after
+      if is_nil(prev) do
+        Process.delete(@modified_key)
+      else
+        Process.put(@modified_key, prev)
+      end
+    end
+  end
+
+  def without_affecting_stickiness(fun) when is_function(fun, 1) do
+    without_affecting_stickiness(fn -> fun.(__MODULE__) end)
   end
 
   def config(name \\ nil) do
@@ -60,8 +95,20 @@ defmodule Laravex.Database.Connection do
   end
 
   def execute(sql, bindings \\ []) do
-    adapter().execute(sql, bindings)
+    result = adapter().execute(sql, bindings)
+    maybe_mark_write(sql)
+    result
   end
+
+  defp maybe_mark_write(sql) when is_binary(sql) do
+    trimmed = sql |> String.trim_leading() |> String.upcase()
+
+    if String.starts_with?(trimmed, ["INSERT", "UPDATE", "DELETE", "REPLACE", "TRUNCATE"]) do
+      records_have_been_modified(true)
+    end
+  end
+
+  defp maybe_mark_write(_), do: :ok
 
   def last_insert_id do
     case adapter_name() do

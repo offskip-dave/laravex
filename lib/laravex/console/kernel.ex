@@ -50,6 +50,8 @@ defmodule Laravex.Console.Kernel do
     "storage:link" => {&__MODULE__.cmd_storage_link/1, "Link public storage"},
     "down" => {&__MODULE__.cmd_down/1, "Put the application into maintenance mode"},
     "up" => {&__MODULE__.cmd_up/1, "Bring the application out of maintenance mode"},
+    "session:garbage-collect" =>
+      {&__MODULE__.cmd_session_gc/1, "Garbage-collect expired sessions"},
     "about" => {&__MODULE__.cmd_about/1, "Display basic application information"},
     "env" => {&__MODULE__.cmd_env/1, "Display the current framework environment"},
     "key:generate" => {&__MODULE__.cmd_key_generate/1, "Set the application key"},
@@ -758,6 +760,11 @@ defmodule Laravex.Console.Kernel do
   def cmd_up(_) do
     Laravex.Foundation.Maintenance.up()
     Output.info("Application is now live.")
+  end
+
+  def cmd_session_gc(_) do
+    Laravex.Session.Store.garbage_collect()
+    Output.info("Expired sessions garbage-collected.")
   end
 
   def cmd_about(_) do

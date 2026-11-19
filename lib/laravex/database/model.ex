@@ -1662,7 +1662,7 @@ defmodule Laravex.Database.Model do
 
   def apply_mutators(mod, attrs) when is_map(attrs) do
     Map.new(attrs, fn {k, v} ->
-      key = to_string(k)
+      key = normalize_attribute_key(k)
       mutator = :"set_#{key}_attribute"
 
       if function_exported?(mod, mutator, 1) do
@@ -1671,6 +1671,14 @@ defmodule Laravex.Database.Model do
         {key, v}
       end
     end)
+  end
+
+  @doc "Normalize attribute keys so `is-admin` / `isAdmin` match `is_admin` (Laravel #62499)."
+  def normalize_attribute_key(key) do
+    key
+    |> to_string()
+    |> String.replace("-", "_")
+    |> Macro.underscore()
   end
 
   defp cast_out(mod, key, value) do
@@ -1743,8 +1751,17 @@ defmodule Laravex.Database.Model do
   @system_attrs ~w(id created_at updated_at email_verified_at remember_token deleted_at)
 
   def cast_attrs(mod, attrs) do
-    casts = if function_exported?(mod, :casts, 0), do: mod.casts(), else: %{}
-    attrs = Enum.filter(attrs, fn {k, _} -> fillable?(mod, k) end)
+    casts =
+      if function_exported?(mod, :casts, 0) do
+        Map.new(mod.casts(), fn {k, v} -> {normalize_attribute_key(k), v} end)
+      else
+        %{}
+      end
+
+    attrs =
+      attrs
+      |> Map.new(fn {k, v} -> {normalize_attribute_key(k), v} end)
+      |> Enum.filter(fn {k, _} -> fillable?(mod, k) end)
 
     Map.new(attrs, fn {k, v} ->
       {k, cast_one(Map.get(casts, k), v)}
@@ -1752,22 +1769,39 @@ defmodule Laravex.Database.Model do
   end
 
   def fillable?(mod, key) do
-    key = to_string(key)
+    key = normalize_attribute_key(key)
 
     cond do
       key in @system_attrs ->
         true
 
       function_exported?(mod, :fillable, 0) ->
-        key in Enum.map(mod.fillable(), &to_string/1)
+        fillable = Enum.map(mod.fillable(), &normalize_attribute_key/1)
+        key in fillable
 
       function_exported?(mod, :guarded, 0) ->
-        guarded = Enum.map(mod.guarded(), &to_string/1)
+        guarded = Enum.map(mod.guarded(), &normalize_attribute_key/1)
         "*" not in guarded and key not in guarded
 
       true ->
         # Eloquex default: unguarded mass assignment when neither fillable nor guarded
         true
+    end
+  end
+
+  def guarded?(mod, key) do
+    key = normalize_attribute_key(key)
+
+    cond do
+      function_exported?(mod, :guarded, 0) ->
+        guarded = Enum.map(mod.guarded(), &normalize_attribute_key/1)
+        "*" in guarded or key in guarded
+
+      function_exported?(mod, :fillable, 0) ->
+        key not in Enum.map(mod.fillable(), &normalize_attribute_key/1)
+
+      true ->
+        false
     end
   end
 

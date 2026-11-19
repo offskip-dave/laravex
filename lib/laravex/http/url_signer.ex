@@ -42,7 +42,11 @@ defmodule Laravex.Http.UrlSigner do
       is_nil(signature) or signature == "" ->
         false
 
-      expires && String.to_integer(expires) < System.system_time(:second) ->
+      # Reject array/non-scalar expires (Laravel #62411 — expires[] bypass)
+      not valid_expires_param?(expires) ->
+        false
+
+      expires_lapsed?(expires) ->
         false
 
       true ->
@@ -52,11 +56,31 @@ defmodule Laravex.Http.UrlSigner do
           |> Map.drop(ignore)
 
         expected = hmac(payload(path, params))
-        secure_compare(expected, signature)
+        secure_compare(expected, to_string(signature))
     end
   rescue
     _ -> false
   end
+
+  # Scalar string/integer only; lists/maps must never look "not expired".
+  defp valid_expires_param?(nil), do: true
+  defp valid_expires_param?(expires) when is_binary(expires), do: true
+  defp valid_expires_param?(expires) when is_integer(expires), do: true
+  defp valid_expires_param?(_), do: false
+
+  defp expires_lapsed?(nil), do: false
+
+  defp expires_lapsed?(expires) when is_integer(expires),
+    do: expires < System.system_time(:second)
+
+  defp expires_lapsed?(expires) when is_binary(expires) do
+    case Integer.parse(String.trim(expires)) do
+      {ts, ""} -> ts < System.system_time(:second)
+      _ -> true
+    end
+  end
+
+  defp expires_lapsed?(_), do: true
 
   def temporary(path, seconds) when is_integer(seconds) do
     sign(path, expires: System.system_time(:second) + seconds)
@@ -121,7 +145,10 @@ defmodule Laravex.Http.UrlSigner do
   end
 
   defp stringify_map(map) do
-    Map.new(map, fn {k, v} -> {to_string(k), to_string(v)} end)
+    Map.new(map, fn
+      {k, v} when is_list(v) or is_map(v) -> {to_string(k), v}
+      {k, v} -> {to_string(k), to_string(v)}
+    end)
   end
 
   defp secure_compare(a, b) do

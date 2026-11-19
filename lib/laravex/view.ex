@@ -152,6 +152,7 @@ defmodule Laravex.View do
         end)
         |> Enum.reject(&(&1 == ""))
 
+      classes = Enum.map(classes, &html_escape/1)
       ~s(class="#{Enum.join(classes, " ")}")
     end)
   end
@@ -290,60 +291,125 @@ defmodule Laravex.View do
           Regex.replace(~r/@slot\(['"][^'"]+['"]\).*?@endslot/s, inner, "")
           |> String.trim()
 
+        passed_attrs = parse_attrs(attrs_src, assigns)
+
         component_assigns =
           assigns
-          |> Map.merge(parse_attrs(attrs_src, assigns))
+          |> Map.merge(passed_attrs)
           |> Map.put("slot", slot)
           |> Map.merge(Map.new(slots, fn {k, v} -> {k, v} end))
+          |> Map.put("__passed_attr_keys__", Map.keys(passed_attrs) |> Enum.map(&to_string/1))
 
         base = Laravex.Foundation.Application.base_path()
+        class_mod = component_module(name)
 
         path =
           find_view(base, name) ||
             find_view(base, "components/#{name}")
 
-        if path do
-          stack = Process.get(:laravex_component_stack, [])
-          Process.put(:laravex_component_stack, [assigns | stack])
+        stack = Process.get(:laravex_component_stack, [])
+        Process.put(:laravex_component_stack, [assigns | stack])
 
-          try do
-            File.read!(path)
-            |> then(fn html ->
-              {html, component_assigns} = apply_props(html, component_assigns)
-              {html, component_assigns} = apply_aware(html, component_assigns)
+        try do
+          cond do
+            class_mod && function_exported?(class_mod, :render, 1) ->
+              render_class_component(class_mod, component_assigns, slot)
 
-              html
-              |> String.replace("{{ $slot }}", slot)
-              |> String.replace("{{ slot }}", slot)
-              |> replace_foreach(component_assigns)
-              |> replace_error(component_assigns)
-              |> replace_directives(component_assigns)
-              |> replace_echoes(component_assigns)
-            end)
-          after
-            Process.put(:laravex_component_stack, stack)
+            path ->
+              File.read!(path)
+              |> then(fn html ->
+                {html, component_assigns} = apply_props(html, component_assigns)
+                {html, component_assigns} = apply_aware(html, component_assigns)
+
+                html
+                |> String.replace("{{ $slot }}", slot)
+                |> String.replace("{{ slot }}", slot)
+                |> String.replace("{!! $attributes !!}", attributes_html(component_assigns))
+                |> String.replace("{!! attributes !!}", attributes_html(component_assigns))
+                |> String.replace("{{ $attributes }}", html_escape(attributes_html(component_assigns)))
+                |> String.replace("{{ attributes }}", html_escape(attributes_html(component_assigns)))
+                |> replace_foreach(component_assigns)
+                |> replace_error(component_assigns)
+                |> replace_directives(component_assigns)
+                |> replace_echoes(component_assigns)
+              end)
+
+            true ->
+              "<!-- missing component #{name} -->"
           end
-        else
-          "<!-- missing component #{name} -->"
+        after
+          Process.put(:laravex_component_stack, stack)
         end
       end
     )
   end
 
+  defp component_module(name) do
+    candidates = [
+      Module.concat([App, View, Components, Macro.camelize(name)]),
+      Module.concat([App, Components, Macro.camelize(name)])
+    ]
+
+    Enum.find(candidates, fn mod ->
+      match?({:module, ^mod}, Code.ensure_loaded(mod))
+    end)
+  end
+
+  defp render_class_component(mod, assigns, slot) do
+    assigns = Map.put(assigns, "slot", slot)
+
+    case mod.render(assigns) do
+      %Laravex.View.RawTemplate{} = raw ->
+        Laravex.View.RawTemplate.render(raw, assigns)
+
+      html when is_binary(html) ->
+        render_string(html, assigns)
+
+      other ->
+        to_string(other)
+    end
+  end
+
+  defp attributes_html(assigns) do
+    case Map.get(assigns, "attributes") || Map.get(assigns, :attributes) do
+      %Laravex.View.AttributeBag{} = bag -> Laravex.View.AttributeBag.to_html(bag)
+      map when is_map(map) -> Laravex.View.AttributeBag.to_html(Laravex.View.AttributeBag.new(map))
+      _ -> ""
+    end
+  end
+
   # @props(['type' => 'info', 'message']) — declare defaults / required keys.
+  # Remaining keys become an escaped AttributeBag under `attributes` (#62503).
   defp apply_props(contents, assigns) do
     case Regex.run(~r/@props\(\[(.*?)\]\)/s, contents) do
       [full, inner] ->
         defaults = parse_props_list(inner, assigns)
+        prop_keys = Map.keys(defaults)
 
         merged =
           Enum.reduce(defaults, assigns, fn {k, default}, acc ->
             cond do
               Map.has_key?(acc, k) -> acc
               Map.has_key?(acc, String.to_atom(k)) -> Map.put(acc, k, Map.get(acc, String.to_atom(k)))
-              true -> Map.put(acc, k, default)
+              true -> Map.put(acc, k, escape_attr_default(default))
             end
           end)
+
+        passed = Map.get(merged, "__passed_attr_keys__", []) |> Enum.map(&to_string/1)
+
+        bag_keys =
+          passed
+          |> Enum.reject(fn k -> k in prop_keys end)
+
+        bag =
+          bag_keys
+          |> Map.new(fn k -> {k, Map.get(merged, k) || Map.get(merged, String.to_atom(k))} end)
+          |> Laravex.View.AttributeBag.new()
+
+        merged =
+          merged
+          |> Map.drop(bag_keys ++ ["__passed_attr_keys__"])
+          |> Map.put("attributes", bag)
 
         {String.replace(contents, full, "", global: false), merged}
 
@@ -351,6 +417,19 @@ defmodule Laravex.View do
         {contents, assigns}
     end
   end
+
+  defp escape_attr_default({:raw, value}), do: value
+
+  defp escape_attr_default(value) when is_binary(value) do
+    value
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("'", "&#039;")
+  end
+
+  defp escape_attr_default(value), do: value
 
   defp apply_inject(contents, assigns) do
     case Regex.run(~r/@inject\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*\)/, contents) do

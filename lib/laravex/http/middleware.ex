@@ -53,6 +53,79 @@ defmodule Laravex.Http.Middleware do
     %{middleware | global: [plug | middleware.global]}
   end
 
+  @doc "Replace a global middleware entry with one or more plugs (Laravel `replace`, array-aware)."
+  def replace(%__MODULE__{} = middleware, search, replace) do
+    %{middleware | global: replace_in_list(middleware.global, search, replace)}
+  end
+
+  @doc "Replace a middleware entry inside a group."
+  def replace_in_group(%__MODULE__{} = middleware, group, search, replace) do
+    groups =
+      Map.update(middleware.groups, to_string(group), List.wrap(replace), fn existing ->
+        replace_in_list(existing, search, replace)
+      end)
+
+    %{middleware | groups: groups}
+  end
+
+  @doc "Insert a plug before another in a group (Laravel `insertBefore`)."
+  def insert_before(%__MODULE__{} = middleware, group, relative, plug) do
+    groups =
+      Map.update(middleware.groups, to_string(group), [plug], fn existing ->
+        insert_relative(existing, relative, plug, :before)
+      end)
+
+    %{middleware | groups: groups}
+  end
+
+  @doc "Insert a plug after another in a group (Laravel `insertAfter`)."
+  def insert_after(%__MODULE__{} = middleware, group, relative, plug) do
+    groups =
+      Map.update(middleware.groups, to_string(group), [plug], fn existing ->
+        insert_relative(existing, relative, plug, :after)
+      end)
+
+    %{middleware | groups: groups}
+  end
+
+  @doc "Remove a plug from a group."
+  def remove_from_group(%__MODULE__{} = middleware, group, plug) do
+    groups =
+      Map.update(middleware.groups, to_string(group), [], fn existing ->
+        Enum.reject(existing, &plug_matches?(&1, plug))
+      end)
+
+    %{middleware | groups: groups}
+  end
+
+  defp replace_in_list(list, search, replace) do
+    replacements = List.wrap(replace)
+
+    Enum.flat_map(list, fn plug ->
+      if plug_matches?(plug, search), do: replacements, else: [plug]
+    end)
+  end
+
+  defp insert_relative(list, relative, plug, :before) do
+    case Enum.find_index(list, &plug_matches?(&1, relative)) do
+      nil -> list ++ [plug]
+      idx -> List.insert_at(list, idx, plug)
+    end
+  end
+
+  defp insert_relative(list, relative, plug, :after) do
+    case Enum.find_index(list, &plug_matches?(&1, relative)) do
+      nil -> list ++ [plug]
+      idx -> List.insert_at(list, idx + 1, plug)
+    end
+  end
+
+  defp plug_matches?({mod, _opts}, search), do: plug_matches?(mod, search)
+  defp plug_matches?(mod, {search, _opts}), do: plug_matches?(mod, search)
+  defp plug_matches?(mod, search) when is_atom(mod) and is_atom(search), do: mod == search
+  defp plug_matches?(mod, search) when is_atom(mod), do: to_string(mod) == to_string(search)
+  defp plug_matches?(_, _), do: false
+
   def global(%__MODULE__{} = m), do: m.global || []
   def web_group(%__MODULE__{} = m), do: Map.get(m.groups, "web", [])
   def api_group(%__MODULE__{} = m), do: Map.get(m.groups, "api", [])

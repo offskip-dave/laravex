@@ -200,6 +200,7 @@ defmodule Laravex.Queue.Worker do
     try do
       job_mod = resolve_job_module(data["job"])
       args = decode_args(data["args"] || [])
+      Process.put(:laravex_job_created_at, parse_int(Map.get(job, "created_at"), System.system_time(:second)))
 
       case run_job(job_mod, args) do
         {:skipped, :duplicate} ->
@@ -223,6 +224,8 @@ defmodule Laravex.Queue.Worker do
       e ->
         Laravex.Observability.record_job(Map.get(data, "job"), {:error, Exception.message(e)})
         fail(job, data, attempts, e)
+    after
+      Process.delete(:laravex_job_created_at)
     end
   end
 
@@ -240,10 +243,11 @@ defmodule Laravex.Queue.Worker do
 
   defp fail(%{"id" => id, "payload" => payload, "queue" => queue}, data, attempts, error) do
     max_tries = parse_int(Map.get(data, "tries"), 1)
-    backoff = parse_int(Map.get(data, "backoff"), 0)
+    job_mod = resolve_job_module_safe(data["job"])
 
     if attempts < max_tries do
-      available_at = System.system_time(:second) + max(backoff, 0)
+      delay = backoff_delay(data, job_mod, attempts)
+      available_at = System.system_time(:second) + max(delay, 0)
 
       Laravex.Database.Connection.execute(
         "UPDATE jobs SET reserved_at = NULL, available_at = ? WHERE id = ?",
@@ -269,6 +273,53 @@ defmodule Laravex.Queue.Worker do
       Laravex.Bus.record_job_finished(Map.get(data, "batch_id"), :failed, id)
     end
   end
+
+  @doc """
+  Delay seconds for the current attempt (Laravel `releaseUsingBackoff`).
+
+  Supports a single integer, comma-separated schedule (`\"10,30,60\"`), or a list.
+  Uses the last value when attempts exceed the schedule.
+  """
+  def release_using_backoff(backoff, attempts \\ 1) do
+    schedule = backoff_schedule(backoff)
+    index = max(attempts - 1, 0)
+
+    case Enum.at(schedule, index) do
+      nil -> List.last(schedule) || 0
+      n -> n
+    end
+  end
+
+  defp backoff_delay(data, job_mod, attempts) do
+    backoff =
+      cond do
+        is_atom(job_mod) and function_exported?(job_mod, :backoff, 0) -> job_mod.backoff()
+        true -> Map.get(data, "backoff", 0)
+      end
+
+    release_using_backoff(backoff, attempts)
+  end
+
+  defp backoff_schedule(backoff) when is_list(backoff),
+    do: Enum.map(backoff, &parse_int(&1, 0))
+
+  defp backoff_schedule(backoff) when is_integer(backoff), do: [backoff]
+
+  defp backoff_schedule(backoff) when is_binary(backoff) do
+    backoff
+    |> String.split(",", trim: true)
+    |> Enum.map(&parse_int(String.trim(&1), 0))
+  end
+
+  defp backoff_schedule(_), do: [0]
+
+  defp resolve_job_module_safe(name) when is_binary(name) do
+    resolve_job_module(name)
+  rescue
+    _ -> nil
+  end
+
+  defp resolve_job_module_safe(_), do: nil
 
   defp parse_int(n, _default) when is_integer(n), do: n
 
@@ -392,6 +443,8 @@ defmodule Laravex.Queue.Worker do
 
   defp execute_handle(job_mod, args, started_at) do
     result = job_mod.handle(List.wrap(args))
+    duration_ms = System.monotonic_time(:millisecond) - started_at
+    Laravex.Queue.notify_job_duration(job_mod, duration_ms)
 
     case soft_timeout?(job_mod, started_at) do
       true ->
@@ -426,14 +479,23 @@ defmodule Laravex.Queue.Worker do
   end
 
   defp past_retry_until?(job_mod) do
-    if function_exported?(job_mod, :retry_until, 0) do
-      deadline = job_mod.retry_until()
-      now = System.system_time(:second)
-      deadline_ts = coerce_unix(deadline)
-      is_integer(deadline_ts) and now > deadline_ts
-    else
-      false
-    end
+    deadline =
+      cond do
+        function_exported?(job_mod, :retry_until, 0) ->
+          job_mod.retry_until()
+
+        # Elixir stand-in for PHP #[RetryFor] (Laravel #62434)
+        function_exported?(job_mod, :retry_for, 0) ->
+          seconds = job_mod.retry_for()
+          created = Process.get(:laravex_job_created_at) || System.system_time(:second)
+          if is_integer(seconds), do: created + seconds, else: nil
+
+        true ->
+          nil
+      end
+
+    deadline_ts = coerce_unix(deadline)
+    is_integer(deadline_ts) and System.system_time(:second) > deadline_ts
   end
 
   defp soft_timeout?(job_mod, started_at_ms) do

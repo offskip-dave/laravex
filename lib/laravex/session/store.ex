@@ -256,6 +256,11 @@ defmodule Laravex.Session.Store do
     end
   end
 
+  @doc "Garbage-collect expired sessions (Laravel `session:garbage-collect`)."
+  def garbage_collect do
+    gc_expired()
+  end
+
   defp gc_expired do
     cutoff = System.system_time(:second) - lifetime_seconds()
     session_driver().gc_expired(cutoff)

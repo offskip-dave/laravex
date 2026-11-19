@@ -8,6 +8,7 @@ defmodule Laravex.Console.Schedule do
   """
 
   @table :laravex_schedule
+  @longer_key :laravex_schedule_longer_than
 
   def ensure do
     if :ets.whereis(@table) == :undefined do
@@ -24,7 +25,19 @@ defmodule Laravex.Console.Schedule do
 
   def reset do
     if :ets.whereis(@table) != :undefined, do: :ets.delete(@table)
+    Process.delete(@longer_key)
     ensure()
+  end
+
+  @doc """
+  Register a callback when a scheduled task runtime exceeds `threshold` seconds
+  (Laravel `Schedule::whenTaskRunsLongerThan`).
+  """
+  def when_task_runs_longer_than(threshold, handler)
+      when is_number(threshold) and is_function(handler, 2) do
+    hooks = Process.get(@longer_key, [])
+    Process.put(@longer_key, hooks ++ [{threshold * 1.0, handler}])
+    :ok
   end
 
   def call(expression, fun, opts \\ []) when is_binary(expression) and is_function(fun, 0) do
@@ -86,22 +99,39 @@ defmodule Laravex.Console.Schedule do
   end
 
   defp run_task(fun, opts) do
-    if Keyword.get(opts, :without_overlapping, false) do
-      key = mutex_key(opts)
-      expires = Keyword.get(opts, :expires_at, 3600)
+    started = System.monotonic_time(:millisecond)
 
-      if acquire_mutex(key, expires) do
-        try do
-          fun.()
-        after
-          release_mutex(key)
+    result =
+      if Keyword.get(opts, :without_overlapping, false) do
+        key = mutex_key(opts)
+        expires = Keyword.get(opts, :expires_at, 3600)
+
+        if acquire_mutex(key, expires) do
+          try do
+            fun.()
+          after
+            release_mutex(key)
+          end
+        else
+          :skipped
         end
       else
-        :skipped
+        fun.()
       end
-    else
-      fun.()
-    end
+
+    runtime_s = (System.monotonic_time(:millisecond) - started) / 1000
+    notify_longer_than(opts, runtime_s)
+    result
+  end
+
+  defp notify_longer_than(opts, runtime_s) do
+    hooks = Process.get(@longer_key, [])
+
+    Enum.each(hooks, fn {threshold, handler} ->
+      if runtime_s > threshold, do: handler.(opts, runtime_s)
+    end)
+  rescue
+    _ -> :ok
   end
 
   defp mutex_key(opts) do
