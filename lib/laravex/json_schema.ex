@@ -114,7 +114,12 @@ defmodule Laravex.JsonSchema do
   end
 
   defp type_rules("boolean", _), do: ["boolean"]
-  defp type_rules("array", _), do: ["array"]
+
+  defp type_rules("array", schema) do
+    ["array"]
+    |> maybe_add(Map.get(schema, "uniqueItems") == true, fn -> "distinct" end)
+  end
+
   defp type_rules("object", schema) do
     keys = schema |> Map.get("properties", %{}) |> Map.keys() |> Enum.map(&to_string/1)
 

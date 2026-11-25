@@ -1838,7 +1838,40 @@ defmodule Laravex.Database.Model do
   end
   defp cast_one(:json, nil), do: nil
 
+  defp cast_one("decimal:" <> places, v), do: cast_decimal(v, places)
+  defp cast_one(:decimal, v), do: cast_decimal(v, "2")
+
   defp cast_one(_, v), do: v
+
+  defp cast_decimal(nil, _), do: nil
+
+  defp cast_decimal(value, places) do
+    raw = to_string(value)
+
+    if extreme_decimal_exponent?(raw) do
+      raise ArgumentError, "Unable to cast value to a decimal."
+    end
+
+    places = String.to_integer(places)
+
+    case Float.parse(raw) do
+      {f, _} -> :erlang.float_to_binary(f, decimals: places)
+      _ -> raise ArgumentError, "Unable to cast value to a decimal."
+    end
+  end
+
+  defp extreme_decimal_exponent?(value) when is_binary(value) do
+    case Regex.run(~r/[eE]([+-]?\d+)\z/, String.trim(value)) do
+      [_, exp] ->
+        case Integer.parse(exp) do
+          {n, ""} -> abs(n) > 1000
+          _ -> true
+        end
+
+      _ ->
+        false
+    end
+  end
 
   defp pivot_count(pivot, fk, ids) do
     Laravex.Database.Query.table(pivot)

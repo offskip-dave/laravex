@@ -900,20 +900,26 @@ defmodule Laravex.Validation do
             Map.get(data, other) || Map.get(data, String.to_atom(other)) || other
         end
 
+      left = to_number(value)
+      right = to_number(other_val)
+
       cond do
+        left == :invalid or right == :invalid ->
+          ["The #{field} field must be a number."]
+
         not (numeric?(value) and numeric?(other_val)) ->
           []
 
-        op == :gt and to_number(value) > to_number(other_val) ->
+        op == :gt and left > right ->
           []
 
-        op == :gte and to_number(value) >= to_number(other_val) ->
+        op == :gte and left >= right ->
           []
 
-        op == :lt and to_number(value) < to_number(other_val) ->
+        op == :lt and left < right ->
           []
 
-        op == :lte and to_number(value) <= to_number(other_val) ->
+        op == :lte and left <= right ->
           []
 
         true ->
@@ -1348,8 +1354,11 @@ defmodule Laravex.Validation do
       is_integer(value) and value < min ->
         ["The #{field} field must be at least #{min}."]
 
-      numeric?(value) and to_number(value) < min ->
-        ["The #{field} field must be at least #{min}."]
+      numeric?(value) ->
+        case to_number(value) do
+          n when is_number(n) and n < min -> ["The #{field} field must be at least #{min}."]
+          _ -> []
+        end
 
       true ->
         []
@@ -1370,8 +1379,14 @@ defmodule Laravex.Validation do
       is_integer(value) and value > max ->
         ["The #{field} field must not be greater than #{max}."]
 
-      numeric?(value) and to_number(value) > max ->
-        ["The #{field} field must not be greater than #{max}."]
+      numeric?(value) ->
+        case to_number(value) do
+          n when is_number(n) and n > max ->
+            ["The #{field} field must not be greater than #{max}."]
+
+          _ ->
+            []
+        end
 
       true ->
         []
@@ -1567,9 +1582,15 @@ defmodule Laravex.Validation do
   defp numeric?(value) when is_number(value), do: true
 
   defp numeric?(value) when is_binary(value) do
-    case Float.parse(value) do
-      {_, ""} -> true
-      _ -> match?({_, ""}, Integer.parse(value))
+    value = String.trim(value)
+
+    if exponent_out_of_range?(value) do
+      false
+    else
+      case Float.parse(value) do
+        {_, ""} -> true
+        _ -> match?({_, ""}, Integer.parse(value))
+      end
     end
   end
 
@@ -1651,17 +1672,41 @@ defmodule Laravex.Validation do
   defp to_number(value) when is_float(value), do: value
 
   defp to_number(value) when is_binary(value) do
-    case Integer.parse(value) do
-      {i, ""} ->
-        i
+    value = String.trim(value)
 
-      _ ->
-        case Float.parse(value) do
-          {f, ""} -> f
-          _ -> 0
-        end
+    if exponent_out_of_range?(value) do
+      :invalid
+    else
+      case Integer.parse(value) do
+        {i, ""} ->
+          i
+
+        _ ->
+          case Float.parse(value) do
+            {f, ""} -> f
+            _ -> :invalid
+          end
+      end
     end
   end
+
+  defp to_number(_), do: :invalid
+
+  # Reject extreme scientific-notation exponents (Laravel #62590 Brick Math parity).
+  defp exponent_out_of_range?(value) when is_binary(value) do
+    case Regex.run(~r/[eE]([+-]?\d+)\z/, value) do
+      [_, exp] ->
+        case Integer.parse(exp) do
+          {n, ""} -> abs(n) > 1000
+          _ -> true
+        end
+
+      _ ->
+        false
+    end
+  end
+
+  defp exponent_out_of_range?(_), do: false
 
   defp valid_url?(value) when is_binary(value) do
     uri = URI.parse(value)
@@ -1749,14 +1794,25 @@ defmodule Laravex.Validation do
   defp distinct_rule(_field, value) when is_nil(value) or value == "", do: []
 
   defp distinct_rule(field, value) when is_list(value) do
-    normalized = Enum.map(value, &to_string/1)
+    # MapSet scan — O(n) vs Enum.uniq length compare (Laravel #62593).
+    {dup?, _} =
+      Enum.reduce_while(value, {false, MapSet.new()}, fn item, {_, seen} ->
+        key = distinct_key(item)
 
-    if length(normalized) == length(Enum.uniq(normalized)),
-      do: [],
-      else: ["The #{field} field has a duplicate value."]
+        if MapSet.member?(seen, key) do
+          {:halt, {true, seen}}
+        else
+          {:cont, {false, MapSet.put(seen, key)}}
+        end
+      end)
+
+    if dup?, do: ["The #{field} field has a duplicate value."], else: []
   end
 
   defp distinct_rule(_field, _), do: []
+
+  defp distinct_key(v) when is_binary(v) or is_number(v) or is_atom(v) or is_boolean(v), do: v
+  defp distinct_key(v), do: :erlang.phash2(v)
 
   defp parse_comparable_date(%Date{} = d), do: d
   defp parse_comparable_date(%DateTime{} = d), do: DateTime.to_date(d)
@@ -1872,20 +1928,21 @@ defmodule Laravex.Http.FormRequest do
   def model(request, key, model_class, callback) do
     {model_class, callback} = normalize_model_args(model_class, callback)
 
-    if not filled_input?(request, key) do
-      nil
-    else
-      id = Laravex.Http.Request.input(request, key)
-      model_class = model_class || guess_model_class(key)
-      query = new_model_query(model_class, callback)
+    case model_identifier(request, key) do
+      nil ->
+        nil
 
-      query
-      |> Laravex.Database.Query.where("id", id)
-      |> Laravex.Database.Query.first()
-      |> case do
-        nil -> nil
-        row -> model_class.from_row(row)
-      end
+      id ->
+        model_class = model_class || guess_model_class(key)
+        query = new_model_query(model_class, callback)
+
+        query
+        |> Laravex.Database.Query.where("id", id)
+        |> Laravex.Database.Query.first()
+        |> case do
+          nil -> nil
+          row -> model_class.from_row(row)
+        end
     end
   end
 
@@ -1895,16 +1952,26 @@ defmodule Laravex.Http.FormRequest do
   def model_or_fail(request, key, model_class, callback) do
     {model_class, callback} = normalize_model_args(model_class, callback)
     model_class = model_class || guess_model_class(key)
-    id = if filled_input?(request, key), do: Laravex.Http.Request.input(request, key), else: nil
 
-    query = new_model_query(model_class, callback)
-
-    case query |> Laravex.Database.Query.where("id", id) |> Laravex.Database.Query.first() do
+    case model(request, key, model_class, callback) do
       nil ->
-        raise Laravex.Database.ModelNotFoundException, model: model_class, id: id
+        raise Laravex.Database.ModelNotFoundException,
+          model: model_class,
+          id: model_identifier(request, key)
 
-      row ->
-        model_class.from_row(row)
+      found ->
+        found
+    end
+  end
+
+  # Scalar identifier only — arrays must not become whereIn (#62576).
+  defp model_identifier(request, key) do
+    id = Laravex.Http.Request.input(request, key)
+
+    cond do
+      not filled_input?(request, key) -> nil
+      is_list(id) or is_map(id) -> nil
+      true -> id
     end
   end
 

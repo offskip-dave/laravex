@@ -273,9 +273,21 @@ defmodule Laravex.Http.Request do
     end
   end
 
+  @doc """
+  Match the request path against Laravel-style patterns (`api`, `api/*`).
+  Accepts one pattern or a list. Leading/trailing slashes are ignored.
+  """
+  def is?(%__MODULE__{} = request, patterns) when is_list(patterns) do
+    Enum.any?(patterns, &is?(request, &1))
+  end
+
   def is?(%__MODULE__{path: path}, pattern) when is_binary(pattern) do
+    path = String.trim(path, "/")
+    pattern = String.trim(pattern, "/")
+
     regex =
       pattern
+      |> String.replace(".", "\\.")
       |> String.replace("*", ".*")
       |> then(&Regex.compile!("^" <> &1 <> "$"))
 

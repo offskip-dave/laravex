@@ -286,7 +286,7 @@ defmodule Laravex.Mail.Mailer do
 
   defp inline_markdown(line) do
     line
-    |> escape_html()
+    |> secured_markdown_escape()
     |> then(fn s ->
       s
       |> String.replace(~r/\*\*(.+?)\*\*/, "<strong>\\1</strong>")
@@ -298,11 +298,23 @@ defmodule Laravex.Mail.Mailer do
     String.contains?(text, "\n") or String.starts_with?(text, "#") or String.contains?(text, "**")
   end
 
+  # Laravel secured Markdown encoding (#62597): htmlspecialchars then escape `\[\]`.
+  defp secured_markdown_escape(text) do
+    text
+    |> to_string()
+    |> escape_html()
+    |> String.replace("\\", "\\\\")
+    |> String.replace("[", "\\[")
+    |> String.replace("]", "\\]")
+  end
+
   defp escape_html(text) do
     text
     |> String.replace("&", "&amp;")
     |> String.replace("<", "&lt;")
     |> String.replace(">", "&gt;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("'", "&#039;")
   end
 end
 

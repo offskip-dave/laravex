@@ -369,6 +369,76 @@ defmodule Laravex.Http.Middleware.HandleCors do
   defp truthy?(v), do: v in [true, "true", 1, "1"]
 end
 
+defmodule Laravex.Http.Exceptions.PostTooLargeException do
+  @moduledoc "Raised when request input keys exceed the cumulative byte limit (Laravel PostTooLargeException)."
+  defexception message: "The cumulative size of the input keys is too large.", plug_status: 413
+end
+
+defmodule Laravex.Http.Middleware.TransformsRequest do
+  @moduledoc false
+
+  # Laravel TransformsRequest::$maxKeyBytes — 20 MiB cumulative key size per request.
+  @max_key_bytes 20 * 1024 * 1024
+
+  def clean(map, transform) when is_map(map) and is_function(transform, 2) do
+    {cleaned, _} = clean_map(map, "", 0, transform)
+    cleaned
+  end
+
+  defp clean_map(map, key_prefix, key_bytes, transform) when is_map(map) do
+    Enum.reduce(map, {%{}, key_bytes}, fn {k, v}, {acc, bytes} ->
+      key = to_string(k)
+      bytes = bytes + byte_size(key_prefix) + byte_size(key)
+
+      if bytes > @max_key_bytes do
+        raise Laravex.Http.Exceptions.PostTooLargeException
+      end
+
+      full_key = key_prefix <> key
+
+      {cleaned, bytes} =
+        cond do
+          is_map(v) ->
+            clean_map(v, full_key <> ".", bytes, transform)
+
+          is_list(v) ->
+            clean_list(v, full_key, bytes, transform)
+
+          true ->
+            {transform.(full_key, v), bytes}
+        end
+
+      {Map.put(acc, k, cleaned), bytes}
+    end)
+  end
+
+  defp clean_list(list, key_prefix, key_bytes, transform) do
+    {items, bytes} =
+      Enum.with_index(list)
+      |> Enum.reduce({[], key_bytes}, fn {item, idx}, {acc, bytes} ->
+        idx_s = Integer.to_string(idx)
+        bytes = bytes + byte_size(key_prefix) + 1 + byte_size(idx_s)
+
+        if bytes > @max_key_bytes do
+          raise Laravex.Http.Exceptions.PostTooLargeException
+        end
+
+        full_key = "#{key_prefix}.#{idx_s}"
+
+        {cleaned, bytes} =
+          cond do
+            is_map(item) -> clean_map(item, full_key <> ".", bytes, transform)
+            is_list(item) -> clean_list(item, full_key, bytes, transform)
+            true -> {transform.(full_key, item), bytes}
+          end
+
+        {[cleaned | acc], bytes}
+      end)
+
+    {Enum.reverse(items), bytes}
+  end
+end
+
 defmodule Laravex.Http.Middleware.TrimStrings do
   @moduledoc "Trim string request input (except password fields)."
 
@@ -376,31 +446,19 @@ defmodule Laravex.Http.Middleware.TrimStrings do
 
   def handle(request, opts) do
     except = Keyword.get(opts, :except, @except) |> Enum.map(&to_string/1)
-    params = map_strings(request.params, except, &String.trim/1)
+
+    params =
+      Laravex.Http.Middleware.TransformsRequest.clean(request.params, fn key, value ->
+        leaf = key |> String.split(".") |> List.last()
+
+        cond do
+          leaf in except -> value
+          is_binary(value) -> String.trim(value)
+          true -> value
+        end
+      end)
+
     {:ok, %{request | params: params}}
-  end
-
-  defp map_strings(map, except, fun) when is_map(map) do
-    Map.new(map, fn {k, v} ->
-      key = to_string(k)
-
-      cond do
-        key in except ->
-          {k, v}
-
-        is_binary(v) ->
-          {k, fun.(v)}
-
-        is_map(v) ->
-          {k, map_strings(v, except, fun)}
-
-        is_list(v) ->
-          {k, Enum.map(v, fn item -> if is_map(item), do: map_strings(item, except, fun), else: item end)}
-
-        true ->
-          {k, v}
-      end
-    end)
   end
 end
 
@@ -408,21 +466,11 @@ defmodule Laravex.Http.Middleware.ConvertEmptyStringsToNull do
   @moduledoc "Convert empty string request input to nil."
 
   def handle(request, _opts) do
-    {:ok, %{request | params: nullify(request.params)}}
-  end
+    params =
+      Laravex.Http.Middleware.TransformsRequest.clean(request.params, fn _key, value ->
+        if value == "", do: nil, else: value
+      end)
 
-  defp nullify(map) when is_map(map) do
-    Map.new(map, fn {k, v} ->
-      cond do
-        v == "" -> {k, nil}
-        is_map(v) -> {k, nullify(v)}
-        is_list(v) -> {k, Enum.map(v, &nullify_value/1)}
-        true -> {k, v}
-      end
-    end)
+    {:ok, %{request | params: params}}
   end
-
-  defp nullify_value(""), do: nil
-  defp nullify_value(v) when is_map(v), do: nullify(v)
-  defp nullify_value(v), do: v
 end

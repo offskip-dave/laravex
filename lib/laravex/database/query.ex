@@ -467,6 +467,12 @@ defmodule Laravex.Database.Query do
   def lock_for_update(%__MODULE__{} = q), do: %{q | lock: :update}
   def shared_lock(%__MODULE__{} = q), do: %{q | lock: :shared}
 
+  @doc """
+  Lock rows for update without blocking foreign-key checks (Postgres `FOR NO KEY UPDATE`).
+  Other drivers fall back to `FOR UPDATE` (Laravel `lockForNoKeyUpdate`).
+  """
+  def lock_for_no_key_update(%__MODULE__{} = q), do: %{q | lock: :no_key_update}
+
   def limit(%__MODULE__{} = q, n), do: %{q | limit: n}
   def offset(%__MODULE__{} = q, n), do: %{q | offset: n}
 
@@ -792,8 +798,22 @@ defmodule Laravex.Database.Query do
 
   defp wrap_union_sql(%__MODULE__{} = q), do: "(" <> build_sql(%{q | unions: []}) <> ")"
 
-  defp lock_clause(%{lock: :update}), do: ""
-  defp lock_clause(%{lock: :shared}), do: ""
+  defp lock_clause(%{lock: :update}), do: " FOR UPDATE"
+
+  defp lock_clause(%{lock: :shared}) do
+    case Laravex.Database.Connection.adapter_name() do
+      name when name in ["mysql", "mariadb"] -> " LOCK IN SHARE MODE"
+      _ -> " FOR SHARE"
+    end
+  end
+
+  defp lock_clause(%{lock: :no_key_update}) do
+    case Laravex.Database.Connection.adapter_name() do
+      name when name in ["pgsql", "postgres"] -> " FOR NO KEY UPDATE"
+      _ -> " FOR UPDATE"
+    end
+  end
+
   defp lock_clause(_), do: ""
 
   defp group_clause(q) do

@@ -154,7 +154,8 @@ defmodule Laravex.Http.Kernel do
   end
 
   defp not_found(request) do
-    if Laravex.Http.Request.wants_json?(request) or Laravex.Http.Request.is?(request, "api/*") or
+    if Laravex.Http.Request.wants_json?(request) or
+         Laravex.Http.Request.is?(request, ["api", "api/*"]) or
          Laravex.Http.Request.ajax?(request) do
       Laravex.Http.Response.json(%{message: "Not Found"}, 404)
     else

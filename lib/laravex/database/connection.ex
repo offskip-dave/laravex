@@ -138,21 +138,79 @@ defmodule Laravex.Database.Connection do
     end
   end
 
-  def transaction(fun) when is_function(fun, 0) do
-    if Laravex.Database.Resolver.native?(current_name()) do
-      Laravex.Database.Pool.transaction(current_name(), fun)
-    else
-      execute("BEGIN")
+  @longer_key :laravex_transaction_longer_than
+  @tx_level_key :laravex_transaction_level
+  @tx_started_key :laravex_transaction_started_at
 
-      try do
-        result = fun.()
-        execute("COMMIT")
-        {:ok, result}
-      rescue
-        e ->
-          _ = execute("ROLLBACK")
-          reraise e, __STACKTRACE__
+  @doc """
+  Register a callback when a transaction runs longer than `threshold` milliseconds
+  (Laravel `Connection::whenTransactionRunsLongerThan`).
+
+  Handler receives `(connection_mod, event, duration_ms)` where event is
+  `:committed` or `:rolled_back`.
+  """
+  def when_transaction_runs_longer_than(threshold, handler)
+      when is_number(threshold) and is_function(handler, 3) do
+    hooks = Process.get(@longer_key, [])
+    Process.put(@longer_key, hooks ++ [{threshold * 1.0, handler}])
+    :ok
+  end
+
+  def transaction(fun) when is_function(fun, 0) do
+    level = Process.get(@tx_level_key, 0)
+    Process.put(@tx_level_key, level + 1)
+
+    if level == 0 do
+      Process.put(@tx_started_key, System.monotonic_time(:millisecond))
+    end
+
+    try do
+      result =
+        if Laravex.Database.Resolver.native?(current_name()) do
+          Laravex.Database.Pool.transaction(current_name(), fun)
+        else
+          execute("BEGIN")
+
+          try do
+            result = fun.()
+            execute("COMMIT")
+            {:ok, result}
+          rescue
+            e ->
+              _ = execute("ROLLBACK")
+              reraise e, __STACKTRACE__
+          end
+        end
+
+      notify_transaction_duration(:committed)
+      result
+    rescue
+      e ->
+        notify_transaction_duration(:rolled_back)
+        reraise e, __STACKTRACE__
+    after
+      Process.put(@tx_level_key, level)
+
+      if level == 0 do
+        Process.delete(@tx_started_key)
       end
     end
+  end
+
+  @doc false
+  def notify_transaction_duration(event) do
+    if Process.get(@tx_level_key, 0) == 1 do
+      started = Process.get(@tx_started_key)
+
+      if is_integer(started) do
+        duration = System.monotonic_time(:millisecond) - started
+
+        Enum.each(Process.get(@longer_key, []), fn {threshold, handler} ->
+          if duration > threshold, do: handler.(__MODULE__, event, duration * 1.0)
+        end)
+      end
+    end
+  rescue
+    _ -> :ok
   end
 end
